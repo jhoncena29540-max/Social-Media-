@@ -1,0 +1,8 @@
+{
+  "name": "SocialIcon",
+  "description": "A high-performance, minimalist black-and-white social media platform featuring real-time feeds, video reels, advanced profiles, and messaging.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ]
+}
