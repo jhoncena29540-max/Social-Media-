@@ -5,7 +5,6 @@ import * as firestoreModule from 'firebase/firestore';
 import * as storageModule from 'firebase/storage';
 import { auth, db, storage } from '../firebase.ts';
 import { Message, Chat, UserProfile } from '../types.ts';
-// Fix: Import Loader2 from lucide-react as it is used in the message sending button
 import { Send, MoreVertical, ChevronLeft, Check, CheckCheck, X, Camera, MessageSquare, Phone, Video, Loader2 } from 'lucide-react';
 import { format, formatDistanceToNow } from 'date-fns';
 
@@ -53,14 +52,14 @@ const ChatItem: React.FC<{ chat: Chat; active: boolean; onClick: () => void }> =
       </div>
       <div className="flex-1 min-w-0">
         <div className="flex justify-between items-start mb-0.5">
-          <p className="font-black text-[10px] uppercase tracking-widest truncate text-brand-black dark:text-brand-white">@{partner?.username || 'node'}</p>
+          <p className="font-black text-[10px] uppercase tracking-widest truncate text-brand-black dark:text-brand-white">@{partner?.username || 'User'}</p>
           <p className="text-[8px] text-brand-gray-400 font-bold uppercase tracking-widest">
             {chat.lastMessageAt ? format(chat.lastMessageAt.toDate(), 'HH:mm') : ''}
           </p>
         </div>
         <div className="flex items-center justify-between">
           <p className={`text-xs truncate font-medium ${unreadCount > 0 ? 'text-brand-black dark:text-brand-white font-bold' : 'text-brand-gray-500'}`}>
-            {isTyping ? <span className="text-green-500 italic animate-pulse">Transmitting...</span> : (chat.lastMessage || 'Channel Established')}
+            {isTyping ? <span className="text-green-500 italic animate-pulse">Typing...</span> : (chat.lastMessage || 'Start talking')}
           </p>
           {unreadCount > 0 && (
             <div className="ml-2 w-4 h-4 bg-brand-black dark:bg-brand-white text-white dark:text-black rounded-full flex items-center justify-center text-[8px] font-black">
@@ -136,15 +135,6 @@ const ChatPage: React.FC = () => {
       }
 
       setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 100);
-    }, (err: any) => {
-        // If query fails due to index missing, fallback to simple query
-        if (err.code === 'failed-precondition') {
-            onSnapshot(query(collection(db, 'messages'), where('chatId', '==', chatId), limit(100)), (snap: any) => {
-                const fetched = snap.docs.map((doc: any) => ({ id: doc.id, ...doc.data() }) as Message);
-                fetched.sort((a, b) => (a.createdAt?.toMillis() || 0) - (b.createdAt?.toMillis() || 0));
-                setMessages(fetched);
-            });
-        }
     });
 
     return () => unsubscribe();
@@ -174,14 +164,14 @@ const ChatPage: React.FC = () => {
       await addDoc(collection(db, 'messages'), {
         chatId,
         senderId: auth.currentUser.uid,
-        content: content || (file ? 'File Attachment' : ''),
+        content: content || (file ? 'Photo Attachment' : ''),
         mediaURL,
         status: 'sent',
         createdAt: serverTimestamp()
       });
       
       const updateObj: any = {
-        lastMessage: content || 'File Attachment',
+        lastMessage: content || 'Photo Attachment',
         lastMessageAt: serverTimestamp(),
       };
       
@@ -193,7 +183,7 @@ const ChatPage: React.FC = () => {
       await updateDoc(doc(db, 'chats', chatId), updateObj);
       clearTyping();
     } catch (error) {
-      console.error("Transmission Error:", error);
+      console.error("Message Error:", error);
     } finally {
       setUploadingMedia(false);
     }
@@ -217,7 +207,7 @@ const ChatPage: React.FC = () => {
       {/* Chats List Sidebar */}
       <div className={`w-full md:w-96 border-r border-brand-gray-100 dark:border-brand-gray-900 flex flex-col ${chatId ? 'hidden md:flex' : 'flex'}`}>
         <div className="p-8 border-b border-brand-gray-100 dark:border-brand-gray-900 bg-brand-white dark:bg-brand-black z-10">
-          <h2 className="text-2xl font-black italic tracking-tighter uppercase leading-none text-brand-black dark:text-brand-white">Chats</h2>
+          <h2 className="text-2xl font-black italic tracking-tighter uppercase leading-none text-brand-black dark:text-brand-white">Messages</h2>
         </div>
         <div className="overflow-y-auto flex-1 pb-20 md:pb-0 scrollbar-hide">
           {chats.map(chat => (
@@ -231,7 +221,7 @@ const ChatPage: React.FC = () => {
           {!loading && chats.length === 0 && (
             <div className="p-12 text-center text-brand-gray-400 mt-10">
               <MessageSquare size={48} className="mx-auto mb-6 opacity-10" />
-              <p className="text-[10px] font-black uppercase tracking-widest italic leading-relaxed">No conversations active.<br/>Initiate a chat session.</p>
+              <p className="text-[10px] font-black uppercase tracking-widest italic leading-relaxed">No messages.<br/>Pick someone to chat with.</p>
             </div>
           )}
         </div>
@@ -252,14 +242,14 @@ const ChatPage: React.FC = () => {
                 {activePartner?.isOnline && <div className="absolute -bottom-0.5 -right-0.5 w-3 h-3 bg-green-500 border-2 border-brand-white dark:border-brand-black rounded-full shadow-md"></div>}
               </div>
               <div className="flex flex-col">
-                <p className="font-black text-[10px] uppercase tracking-widest text-brand-black dark:text-brand-white">@{activePartner?.username || 'node'}</p>
+                <p className="font-black text-[10px] uppercase tracking-widest text-brand-black dark:text-brand-white">@{activePartner?.username || 'User'}</p>
                 <div className="flex items-center space-x-2">
                   {chats.find(c => c.id === chatId)?.typingStatus?.[activePartner?.uid || ''] ? (
                     <span className="text-[8px] text-green-500 font-black uppercase tracking-widest animate-pulse">Typing...</span>
                   ) : activePartner?.isOnline ? (
-                    <span className="text-[8px] text-green-500 font-black uppercase tracking-widest">Active Connection</span>
+                    <span className="text-[8px] text-green-500 font-black uppercase tracking-widest">Online</span>
                   ) : (
-                    <span className="text-[8px] text-brand-gray-400 font-black uppercase tracking-widest italic">Offline Node</span>
+                    <span className="text-[8px] text-brand-gray-400 font-black uppercase tracking-widest italic">Offline</span>
                   )}
                 </div>
               </div>
@@ -274,9 +264,6 @@ const ChatPage: React.FC = () => {
           <div className="flex-1 overflow-y-auto p-8 space-y-4 scrollbar-hide">
             {messages.map((msg, idx) => {
               const isMine = msg.senderId === auth.currentUser?.uid;
-              const nextMsg = messages[idx + 1];
-              const isLastInGroup = !nextMsg || nextMsg.senderId !== msg.senderId;
-
               return (
                 <div key={msg.id} className={`flex ${isMine ? 'justify-end' : 'justify-start'}`}>
                   <div className={`max-w-[80%] md:max-w-[65%] ${isMine ? 'items-end' : 'items-start'} flex flex-col`}>
@@ -300,7 +287,7 @@ const ChatPage: React.FC = () => {
                                msg.status === 'read' ? <CheckCheck size={10} className="text-blue-400" /> : <Check size={10} />
                            )}
                         </div>
-                        <div className="h-2 w-8" /> {/* Spacer for timestamp */}
+                        <div className="h-2 w-8" />
                       </div>
                     )}
                   </div>
@@ -329,7 +316,7 @@ const ChatPage: React.FC = () => {
                 type="text" 
                 value={newMessage}
                 onChange={handleTyping}
-                placeholder="Secure transmission..."
+                placeholder="Type a message..."
                 className="flex-1 bg-brand-gray-50 dark:bg-brand-gray-950 border border-brand-gray-100 dark:border-brand-gray-900 px-6 py-4 rounded-2xl text-sm focus:outline-none transition-all font-medium text-brand-black dark:text-brand-white shadow-inner"
               />
               <button 
@@ -354,9 +341,9 @@ const ChatPage: React.FC = () => {
           <div className="w-24 h-24 bg-brand-white dark:bg-brand-black border border-brand-gray-200 dark:border-brand-gray-800 rounded-[2rem] flex items-center justify-center mb-10 shadow-2xl">
              <MessageSquare size={48} className="text-brand-black dark:text-brand-white opacity-10" />
           </div>
-          <h2 className="text-3xl font-black italic tracking-tighter uppercase mb-4 text-brand-black dark:text-brand-white">Secure Grid</h2>
+          <h2 className="text-3xl font-black italic tracking-tighter uppercase mb-4 text-brand-black dark:text-brand-white">Messages</h2>
           <p className="text-brand-gray-500 text-center max-w-sm font-medium italic opacity-60">
-            Select a node conversation to synchronize encrypted messages.
+            Pick a chat to start talking.
           </p>
         </div>
       )}

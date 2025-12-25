@@ -14,8 +14,8 @@ const { useParams, useNavigate } = RouterNamespace as any;
 const { collection, query, where, getDocs, updateDoc, increment, doc, serverTimestamp, setDoc, deleteDoc, getDoc, limit, startAfter, addDoc, onSnapshot } = firestoreModule as any;
 type QueryDocumentSnapshot = any;
 
-type ProfileTab = 'Posts' | 'Reels' | 'Pending' | 'Likes' | 'Saved';
-type ContentFilter = 'All' | 'Text' | 'Image' | 'Video' | 'Article';
+type ProfileTab = 'Posts' | 'Videos' | 'Scheduled' | 'Likes' | 'Saved';
+type ContentFilter = 'All' | 'Text' | 'Photo' | 'Video' | 'Article';
 
 const Profile: React.FC = () => {
   const { username } = useParams();
@@ -79,7 +79,7 @@ const Profile: React.FC = () => {
     return () => {
       if (unsubscribeProfile) unsubscribeProfile();
     };
-  }, [username]);
+  }, [username, activeTab]);
 
   const posts = useMemo(() => {
     let filtered = [...rawPosts];
@@ -123,10 +123,22 @@ const Profile: React.FC = () => {
           const pdoc = await getDoc(doc(db, 'posts', pid));
           if (pdoc.exists()) fetchedPosts.push({ id: pdoc.id, ...pdoc.data() } as Post);
         }
+      } else if (activeTab === 'Scheduled') {
+        if (isOwnProfile) {
+          let q = query(
+            collection(db, 'posts'), 
+            where('authorId', '==', userId), 
+            where('isPublished', '==', false),
+            limit(baseLimit)
+          );
+          if (!isInitial && lastDoc) q = query(q, startAfter(lastDoc));
+          snapshot = await getDocs(q);
+          fetchedPosts = snapshot.docs.map((doc: any) => ({ id: doc.id, ...doc.data() }) as Post);
+        }
       } else {
         let qConstraints = [where('authorId', '==', userId), where('isPublished', '==', true)];
         if (!isOwnProfile) qConstraints.push(where('visibility', '==', 'public'));
-        if (activeTab === 'Reels') qConstraints.push(where('type', '==', 'reel'));
+        if (activeTab === 'Videos') qConstraints.push(where('type', '==', 'reel'));
 
         let q = query(collection(db, 'posts'), ...qConstraints, limit(baseLimit));
         if (!isInitial && lastDoc) q = query(q, startAfter(lastDoc));
@@ -138,7 +150,7 @@ const Profile: React.FC = () => {
       setLastDoc(snapshot ? snapshot.docs[snapshot.docs.length - 1] : null);
       setHasMore(snapshot ? snapshot.docs.length === baseLimit : false);
     } catch (err: any) {
-      console.error("Content Fetch Failure:", err);
+      console.error("Content fetch failure:", err);
     } finally {
       setLoadingMore(false);
     }
@@ -187,7 +199,6 @@ const Profile: React.FC = () => {
     setStartingChat(true);
 
     try {
-      // Find if chat already exists
       const q = query(
         collection(db, 'chats'), 
         where('participants', 'array-contains', auth.currentUser.uid)
@@ -198,7 +209,6 @@ const Profile: React.FC = () => {
       if (existingChat) {
         navigate(`/messages/${existingChat.id}`);
       } else {
-        // Create new chat
         const newChatRef = await addDoc(collection(db, 'chats'), {
           participants: [auth.currentUser.uid, profile.uid],
           lastMessage: '',
@@ -229,7 +239,7 @@ const Profile: React.FC = () => {
   };
 
   if (loading) return <div className="p-20 flex justify-center"><Loader2 size={48} className="animate-spin text-brand-black dark:text-brand-white" /></div>;
-  if (!profile) return <div className="p-20 text-center uppercase font-black italic opacity-20 tracking-widest">Identity Nullified.</div>;
+  if (!profile) return <div className="p-20 text-center uppercase font-black italic opacity-20 tracking-widest">User not found</div>;
 
   const isOwnProfile = auth.currentUser?.uid === profile.uid;
 
@@ -247,7 +257,7 @@ const Profile: React.FC = () => {
             </div>
             <div className="flex space-x-4 mb-4">
               {isOwnProfile ? (
-                <button onClick={() => setIsEditModalOpen(true)} className="bg-brand-white dark:bg-brand-black border border-brand-gray-200 dark:border-brand-gray-800 px-10 py-4 rounded-3xl font-black text-xs uppercase tracking-widest shadow-2xl hover:bg-brand-gray-50 dark:hover:bg-brand-gray-900 transition-all">Sync Identity</button>
+                <button onClick={() => setIsEditModalOpen(true)} className="bg-brand-white dark:bg-brand-black border border-brand-gray-200 dark:border-brand-gray-800 px-10 py-4 rounded-3xl font-black text-xs uppercase tracking-widest shadow-2xl hover:bg-brand-gray-50 dark:hover:bg-brand-gray-900 transition-all">Edit Profile</button>
               ) : (
                 <>
                   <button 
@@ -258,7 +268,7 @@ const Profile: React.FC = () => {
                     {startingChat ? <Loader2 size={24} className="animate-spin" /> : <Mail size={24} />}
                   </button>
                   <button onClick={handleFollowToggle} className={`px-12 py-4 rounded-3xl font-black text-xs uppercase tracking-widest transition-all shadow-2xl ${isFollowing ? 'bg-brand-gray-200 dark:bg-brand-gray-800 text-brand-gray-500' : 'bg-brand-black text-white dark:bg-brand-white dark:text-black hover:opacity-90'}`}>
-                    {isFollowing ? 'Linked' : 'Link Signal'}
+                    {isFollowing ? 'Following' : 'Follow'}
                   </button>
                 </>
               )}
@@ -272,7 +282,7 @@ const Profile: React.FC = () => {
               </div>
               {profile.isOnline && <div className="w-2.5 h-2.5 bg-green-500 rounded-full animate-pulse shadow-[0_0_10px_rgba(34,197,94,0.5)]"></div>}
             </div>
-            <p className="text-xl text-brand-gray-700 dark:text-brand-gray-300 font-medium max-w-2xl leading-relaxed tracking-tight">{profile.bio || "Secure identity. Bio encrypted."}</p>
+            <p className="text-xl text-brand-gray-700 dark:text-brand-gray-300 font-medium max-w-2xl leading-relaxed tracking-tight">{profile.bio || "No bio yet."}</p>
             <div className="flex flex-wrap gap-6 text-[10px] font-black uppercase tracking-widest text-brand-gray-400">
               {profile.website && (
                 <a href={profile.website.startsWith('http') ? profile.website : `https://${profile.website}`} target="_blank" rel="noopener noreferrer" className="flex items-center space-x-2 hover:text-brand-black dark:hover:text-brand-white transition-colors">
@@ -282,7 +292,7 @@ const Profile: React.FC = () => {
               )}
               <div className="flex items-center space-x-2">
                 <Calendar size={14} />
-                <span>Uplinked {profile.createdAt ? format(profile.createdAt.toDate(), 'MMM yyyy') : 'Recent'}</span>
+                <span>Joined {profile.createdAt ? format(profile.createdAt.toDate(), 'MMM yyyy') : 'Recently'}</span>
               </div>
             </div>
 
@@ -307,11 +317,12 @@ const Profile: React.FC = () => {
       <div className="mt-12 flex border-b border-brand-gray-50 dark:border-brand-gray-900/50 px-8 overflow-x-auto scrollbar-hide">
         {[
           { label: 'Posts', icon: Grid },
-          { label: 'Reels', icon: Play },
+          { label: 'Videos', icon: Play },
+          { label: 'Scheduled', icon: Clock },
           { label: 'Likes', icon: Heart },
           { label: 'Saved', icon: Bookmark },
         ].map(tab => {
-          if ((tab.label === 'Saved' || tab.label === 'Likes') && !isOwnProfile) return null;
+          if ((tab.label === 'Saved' || tab.label === 'Likes' || tab.label === 'Scheduled') && !isOwnProfile) return null;
           return (
             <button
               key={tab.label}
@@ -335,7 +346,7 @@ const Profile: React.FC = () => {
         ) : (
           <div className="py-32 text-center text-brand-gray-300 bg-brand-gray-50 dark:bg-brand-gray-950/30 rounded-[3rem] border-2 border-dashed border-brand-gray-100 dark:border-brand-gray-900">
             <FileText size={64} className="mx-auto mb-6 opacity-5" />
-            <p className="font-black italic text-sm tracking-[0.4em] uppercase opacity-20">Silent frequency.</p>
+            <p className="font-black italic text-sm tracking-[0.4em] uppercase opacity-20">No posts yet</p>
           </div>
         )}
         {loadingMore && <div className="text-center py-10"><Loader2 size={32} className="animate-spin text-brand-black dark:text-brand-white mx-auto" /></div>}

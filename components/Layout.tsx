@@ -12,24 +12,36 @@ import {
   PlusSquare,
   TrendingUp,
   Sparkles,
-  AlertCircle
+  AlertCircle,
+  Hash
 } from 'lucide-react';
 import { auth, db } from '../firebase.ts';
 import * as firestoreModule from 'firebase/firestore';
 
-const { NavLink, Outlet, useNavigate } = RouterNamespace as any;
-const { doc, onSnapshot, updateDoc, serverTimestamp, query, collection, where } = firestoreModule as any;
+const { NavLink, Outlet, useNavigate, useSearchParams } = RouterNamespace as any;
+const { doc, onSnapshot, updateDoc, serverTimestamp, query, collection, where, limit } = firestoreModule as any;
 type User = any;
 
 interface LayoutProps {
   user: User | null;
 }
 
+interface TrendingTag {
+  name: string;
+  count: number;
+  category: string;
+  uniqueAuthors: number;
+}
+
 const Layout: React.FC<LayoutProps> = ({ user }) => {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const [currentUserData, setCurrentUserData] = useState<any>(null);
   const [showLogoutModal, setShowLogoutModal] = useState(false);
   const [unreadNotifications, setUnreadNotifications] = useState(0);
+  const [trendingTags, setTrendingTags] = useState<TrendingTag[]>([]);
+
+  const activeTag = searchParams.get('tag');
 
   useEffect(() => {
     if (!user?.uid) return;
@@ -40,18 +52,67 @@ const Layout: React.FC<LayoutProps> = ({ user }) => {
     });
 
     // Unread Notifications Listener
-    const q = query(
+    const qNotif = query(
       collection(db, 'notifications'),
-      where('recipientId', '==', user.uid),
-      where('read', '==', false)
+      where('recipientId', '==', user.uid)
     );
-    const unsubscribeNotifications = onSnapshot(q, (snap: any) => {
-      setUnreadNotifications(snap.size);
+    const unsubscribeNotifications = onSnapshot(qNotif, (snap: any) => {
+      const unreadCount = snap.docs.filter((d: any) => d.data().read === false).length;
+      setUnreadNotifications(unreadCount);
+    }, (err: any) => {
+      console.error("Notification listener failed:", err);
+    });
+
+    // Trending Tags Discovery - Refined to include diversity check
+    const tagsQuery = query(
+      collection(db, 'posts'),
+      where('visibility', '==', 'public'),
+      limit(150) // Larger sample for better trend diversity
+    );
+
+    const unsubscribeTags = onSnapshot(tagsQuery, (snap: any) => {
+      const tagMap: Record<string, { count: number; category: string; lastUpdated: number; authors: Set<string> }> = {};
+      
+      snap.docs.forEach((d: any) => {
+        const data = d.data();
+        if (data.isPublished === true) {
+          const tags = data.tags || [];
+          const cat = data.category || 'General';
+          const author = data.authorId;
+          const time = data.createdAt?.toMillis() || 0;
+          
+          tags.forEach((tag: string) => {
+            if (!tagMap[tag]) {
+              tagMap[tag] = { count: 0, category: cat, lastUpdated: time, authors: new Set() };
+            }
+            tagMap[tag].count += 1;
+            tagMap[tag].authors.add(author);
+            if (time > tagMap[tag].lastUpdated) tagMap[tag].lastUpdated = time;
+          });
+        }
+      });
+
+      const sortedTags = Object.entries(tagMap)
+        .map(([name, data]) => ({ 
+          name, 
+          count: data.count, 
+          category: data.category, 
+          lastUpdated: data.lastUpdated, 
+          uniqueAuthors: data.authors.size 
+        }))
+        // Prioritize tags used by different people (uniqueAuthors)
+        .sort((a, b) => (b.uniqueAuthors * 5 + b.count) - (a.uniqueAuthors * 5 + a.count) || b.lastUpdated - a.lastUpdated)
+        .slice(0, 4); // Limit to 4 as requested
+
+      setTrendingTags(sortedTags);
+    }, (err: any) => {
+      console.error("Tags discovery failed:", err);
     });
 
     return () => {
       unsubscribeProfile();
       unsubscribeNotifications();
+      unsubscribeTags();
     };
   }, [user]);
 
@@ -69,9 +130,9 @@ const Layout: React.FC<LayoutProps> = ({ user }) => {
   const navItems = [
     { icon: Home, label: 'Feed', path: '/' },
     { icon: Search, label: 'Explore', path: '/explore' },
-    { icon: Play, label: 'Broadcasts', path: '/reels' },
+    { icon: Play, label: 'Videos', path: '/reels' },
     { icon: Bell, label: 'Alerts', path: '/notifications', badge: unreadNotifications },
-    { icon: Mail, label: 'Chats', path: '/messages' },
+    { icon: Mail, label: 'Messages', path: '/messages' },
     { icon: UserIcon, label: 'Profile', path: currentUserData?.username ? `/u/${currentUserData.username}` : (user ? `/u/${user.uid}` : '/auth') },
   ];
 
@@ -84,7 +145,7 @@ const Layout: React.FC<LayoutProps> = ({ user }) => {
             <div className="w-10 h-10 bg-brand-black flex items-center justify-center rounded-2xl shadow-xl">
               <span className="text-white font-black text-xl">S</span>
             </div>
-            <span className="text-2xl font-black tracking-tighter italic">SOCIALICON</span>
+            <span className="text-2xl font-black tracking-tighter italic text-brand-black">SOCIALICON</span>
           </div>
 
           <nav className="flex-1 space-y-1.5">
@@ -126,7 +187,7 @@ const Layout: React.FC<LayoutProps> = ({ user }) => {
               className="w-full mt-6 flex items-center justify-center space-x-3 bg-brand-black text-white py-5 rounded-[2rem] hover:opacity-90 transition-all font-black text-xs uppercase tracking-[0.3em] shadow-2xl active:scale-95 border-b-4 border-brand-gray-800"
             >
               <PlusSquare size={18} />
-              <span>New Signal</span>
+              <span>Post</span>
             </button>
           </nav>
 
@@ -137,7 +198,7 @@ const Layout: React.FC<LayoutProps> = ({ user }) => {
                   <img src={currentUserData.photoURL} className="w-full h-full object-cover" alt="" />
                 </div>
                 <div className="flex-1 min-w-0">
-                  <p className="text-[10px] font-black uppercase tracking-widest truncate">{currentUserData.displayName}</p>
+                  <p className="text-[10px] font-black uppercase tracking-widest truncate text-brand-black">{currentUserData.displayName}</p>
                   <p className="text-[8px] font-bold text-brand-gray-400 truncate tracking-tight">@{currentUserData.username}</p>
                 </div>
               </div>
@@ -164,7 +225,7 @@ const Layout: React.FC<LayoutProps> = ({ user }) => {
           </header>
 
           <div className="pb-32 md:pb-12">
-            <Outlet />
+            <Outlet context={{ trendingTags }} />
           </div>
 
           {/* Bottom Nav Mobile */}
@@ -205,38 +266,49 @@ const Layout: React.FC<LayoutProps> = ({ user }) => {
         <aside className="hidden xl:block w-96 p-10 border-l border-brand-gray-100 sticky top-0 h-screen overflow-y-auto">
           <section className="bg-brand-gray-50 border border-brand-gray-100 rounded-[2.5rem] p-8 mb-8 shadow-sm">
             <div className="flex items-center justify-between mb-8">
-              <h3 className="font-black text-xs uppercase tracking-[0.2em] italic flex items-center">
-                <TrendingUp size={16} className="mr-2" /> Global Signals
+              <h3 className="font-black text-xs uppercase tracking-[0.2em] italic flex items-center text-brand-black">
+                <TrendingUp size={16} className="mr-2" /> Trending
               </h3>
               <Sparkles size={14} className="text-brand-gray-400 animate-pulse" />
             </div>
             <div className="space-y-6">
-               <div className="group cursor-pointer">
-                <p className="text-[10px] text-brand-gray-500 font-black uppercase tracking-widest mb-1">Grid / Tech</p>
-                <p className="font-bold text-lg group-hover:underline tracking-tight">#NeonBroadcast</p>
-                <p className="text-[10px] text-brand-gray-400 font-bold mt-1">18.2K Signals</p>
-              </div>
-              <div className="group cursor-pointer">
-                <p className="text-[10px] text-brand-gray-500 font-black uppercase tracking-widest mb-1">Design / UX</p>
-                <p className="font-bold text-lg group-hover:underline tracking-tight">#SaaSAesthetic</p>
-                <p className="text-[10px] text-brand-gray-400 font-bold mt-1">12.4K Signals</p>
-              </div>
+              {trendingTags.length > 0 ? (
+                trendingTags.map((tag) => (
+                  <button 
+                    key={tag.name} 
+                    onClick={() => navigate(`/?tag=${tag.name}`)}
+                    className={`w-full text-left group cursor-pointer transition-all ${activeTag === tag.name ? 'scale-105' : ''}`}
+                  >
+                    <p className="text-[10px] text-brand-gray-500 font-black uppercase tracking-widest mb-1">{tag.category}</p>
+                    <p className={`font-bold text-lg group-hover:underline tracking-tight ${activeTag === tag.name ? 'text-brand-black underline' : 'text-brand-gray-700'}`}>
+                      #{tag.name}
+                    </p>
+                    <p className="text-[10px] text-brand-gray-400 font-bold mt-1">
+                      {tag.count} posts • {tag.uniqueAuthors} authors
+                    </p>
+                  </button>
+                ))
+              ) : (
+                <div className="py-4 opacity-20">
+                  <p className="text-[10px] font-black uppercase tracking-widest">Nothing yet</p>
+                </div>
+              )}
             </div>
           </section>
 
           <section className="bg-brand-gray-50 border border-brand-gray-100 rounded-[2.5rem] p-8 shadow-sm">
-            <h3 className="font-black text-xs uppercase tracking-[0.2em] italic mb-8">Node Recommendations</h3>
+            <h3 className="font-black text-xs uppercase tracking-[0.2em] italic mb-8 text-brand-black">Suggested People</h3>
             <div className="space-y-6">
               {[1, 2].map((i) => (
                 <div key={i} className="flex items-center justify-between">
                   <div className="flex items-center space-x-4">
                     <div className="w-12 h-12 bg-brand-gray-200 rounded-full border-2 border-brand-white shadow-lg"></div>
                     <div>
-                      <p className="font-black text-xs uppercase tracking-widest">Alpha_Zero</p>
+                      <p className="font-black text-xs uppercase tracking-widest text-brand-black">Alpha_Zero</p>
                       <p className="text-[10px] text-brand-gray-400 font-bold">@alpha_0</p>
                     </div>
                   </div>
-                  <button className="bg-brand-black text-white text-[9px] font-black uppercase tracking-widest py-2.5 px-6 rounded-full shadow-lg active:scale-95 transition-all">Link</button>
+                  <button className="bg-brand-black text-white text-[9px] font-black uppercase tracking-widest py-2.5 px-6 rounded-full shadow-lg active:scale-95 transition-all">Follow</button>
                 </div>
               ))}
             </div>
@@ -252,16 +324,16 @@ const Layout: React.FC<LayoutProps> = ({ user }) => {
               <div className="w-16 h-16 bg-red-50 text-red-500 rounded-full flex items-center justify-center mb-6">
                 <AlertCircle size={32} />
               </div>
-              <h2 className="text-2xl font-black italic tracking-tighter uppercase mb-2 text-brand-black">Logout Node?</h2>
+              <h2 className="text-2xl font-black italic tracking-tighter uppercase mb-2 text-brand-black">Logout?</h2>
               <p className="text-brand-gray-500 text-sm font-medium leading-relaxed mb-8">
-                Are you sure you want to end your session? You will need to re-authenticate to access your node broadcasts.
+                Are you sure you want to log out? You will need to sign in again to see your feed.
               </p>
               <div className="flex w-full space-x-4">
                 <button 
                   onClick={() => setShowLogoutModal(false)}
                   className="flex-1 py-4 bg-brand-gray-50 text-brand-black text-[10px] font-black uppercase tracking-widest rounded-2xl hover:bg-brand-gray-100 transition-all"
                 >
-                  Cancel
+                  Back
                 </button>
                 <button 
                   onClick={handleLogout}

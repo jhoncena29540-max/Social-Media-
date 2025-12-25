@@ -42,10 +42,19 @@ const App: React.FC = () => {
 
     const userRef = doc(db, 'users', user.uid);
     const updatePresence = (isOnline: boolean) => {
+      // CRITICAL: Check if user is still signed in before updating presence
+      // This prevents "Missing or insufficient permissions" errors during logout cleanup
+      if (!auth.currentUser || auth.currentUser.uid !== user.uid) return;
+
       updateDoc(userRef, {
         isOnline,
         lastActive: serverTimestamp()
-      }).catch(err => console.error("Presence Sync Error:", err));
+      }).catch(err => {
+        // Silently handle permission errors that may occur if auth state changes mid-flight
+        if (err.code !== 'permission-denied') {
+          console.debug("Presence Sync Handled:", err.message);
+        }
+      });
     };
 
     updatePresence(true);
@@ -62,7 +71,10 @@ const App: React.FC = () => {
     return () => {
       clearInterval(interval);
       document.removeEventListener('visibilitychange', handleVisibility);
-      updatePresence(false);
+      // Only attempt to set offline if we are still authenticated
+      if (auth.currentUser && auth.currentUser.uid === user.uid) {
+        updatePresence(false);
+      }
     };
   }, [user?.uid]);
 

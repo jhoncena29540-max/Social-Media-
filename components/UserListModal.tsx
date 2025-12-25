@@ -141,7 +141,7 @@ const UserListModal: React.FC<UserListModalProps> = ({ userId, type, isOpen, onC
             ))
           ) : (
             <div className="py-10 text-center text-brand-gray-400">
-              <p className="font-bold italic text-sm">No transmissions detected.</p>
+              <p className="font-bold italic text-sm">No one here yet.</p>
             </div>
           )}
         </div>

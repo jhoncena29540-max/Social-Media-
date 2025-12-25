@@ -1,3 +1,4 @@
+
 import React, { useEffect, useState, useRef } from 'react';
 import * as firestoreModule from 'firebase/firestore';
 import { db } from '../firebase';
@@ -27,7 +28,7 @@ const VideoFeed: React.FC = () => {
       setVideos(data);
       setLoading(false);
     }, (err: any) => {
-      console.error("Reel Transmission Failure:", err);
+      console.error("Reel transmission failed:", err);
       setLoading(false);
     });
 
@@ -48,7 +49,7 @@ const VideoFeed: React.FC = () => {
       {videos.length === 0 && (
         <div className="h-full flex flex-col items-center justify-center text-white p-10 text-center">
           <Play size={64} className="mb-4 opacity-20" />
-          <h2 className="text-2xl font-bold italic opacity-30">NO PUBLIC TRANSMISSIONS DETECTED.</h2>
+          <h2 className="text-2xl font-bold italic opacity-30">NO VIDEOS FOUND.</h2>
         </div>
       )}
     </div>
@@ -106,7 +107,7 @@ const VideoItem: React.FC<{ video: Post }> = ({ video }) => {
         <p className="text-sm font-medium line-clamp-2 mb-4 pointer-events-auto">{video.content}</p>
         <div className="flex items-center space-x-2 text-[10px] uppercase font-black tracking-widest opacity-80">
           <Music size={12} className="animate-spin-slow" />
-          <span>Broadcast Transmission</span>
+          <span>Video Sound</span>
         </div>
       </div>
 

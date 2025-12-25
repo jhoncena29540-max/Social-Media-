@@ -4,9 +4,9 @@ import * as firestoreModule from 'firebase/firestore';
 import * as storageModule from 'firebase/storage';
 import { auth, db, storage } from '../firebase';
 import { 
-  Image, Video, FileText, Send, X, Type as TextIcon, 
-  PlayCircle, Globe, Users, ChevronDown, Sparkles, 
-  Loader2, Hash, Wand2, Tag 
+  Image as ImageIcon, Video as VideoIcon, FileText, Send, X, Type as TextIcon, 
+  Globe, Users, ChevronDown, Sparkles, 
+  Loader2, Hash, Wand2, Tag, Clock, Calendar, Check
 } from 'lucide-react';
 import { PostType } from '../types';
 import { GoogleGenAI, Type } from "@google/genai";
@@ -26,9 +26,13 @@ const CreatePost: React.FC = () => {
   const [postType, setPostType] = useState<PostType>(PostType.TEXT);
   const [visibility, setVisibility] = useState<'public' | 'followers'>('public');
   const [showVisibilityMenu, setShowVisibilityMenu] = useState(false);
+  const [showCategoryMenu, setShowCategoryMenu] = useState(false);
+  
+  const [scheduledAt, setScheduledAt] = useState<string>('');
+  const [showScheduler, setShowScheduler] = useState(false);
   
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const categories = ['General', 'Tech', 'Design', 'Grid', 'Intel', 'Visual'];
+  const categories = ['General', 'Tech', 'Design', 'Gaming', 'News', 'Art'];
 
   const suggestTags = async () => {
     if (!content.trim()) return;
@@ -37,7 +41,7 @@ const CreatePost: React.FC = () => {
       const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
       const response = await ai.models.generateContent({
         model: "gemini-3-flash-preview",
-        contents: `Analyze this social media post content and suggest 3-5 relevant short topic tags for a high-performance discovery engine. Post content: "${content}". Output only as a JSON array of strings.`,
+        contents: `Analyze this social media post content and suggest 3-5 relevant short topic tags. Content: "${content}". Output only as a JSON array of strings.`,
         config: {
           responseMimeType: "application/json",
           responseSchema: {
@@ -49,7 +53,7 @@ const CreatePost: React.FC = () => {
       const suggested = JSON.parse(response.text || "[]");
       setTags(Array.from(new Set([...tags, ...suggested])));
     } catch (err) {
-      console.error("AI Tagging Error:", err);
+      console.error("Tagging Error:", err);
     } finally {
       setAnalyzing(false);
     }
@@ -111,7 +115,7 @@ const CreatePost: React.FC = () => {
           });
         }
       } catch (err) {
-        console.error("Mention notify failed:", err);
+        console.error("Mention failed:", err);
       }
     }
   };
@@ -128,6 +132,9 @@ const CreatePost: React.FC = () => {
         mediaURL = await getDownloadURL(snapshot.ref);
       }
 
+      const scheduleDate = scheduledAt ? new Date(scheduledAt) : null;
+      const isFuture = scheduleDate && scheduleDate.getTime() > Date.now();
+
       const postData = {
         authorId: auth.currentUser.uid,
         authorUsername: auth.currentUser.displayName || 'user',
@@ -141,37 +148,39 @@ const CreatePost: React.FC = () => {
         commentsCount: 0,
         viewsCount: 0,
         createdAt: serverTimestamp(),
-        isPublished: true,
+        scheduledAt: scheduleDate ? Timestamp.fromDate(scheduleDate) : null,
+        isPublished: !isFuture,
         visibility: visibility
       };
 
       const docRef = await addDoc(collection(db, 'posts'), postData);
       await updateDoc(doc(db, 'users', auth.currentUser.uid), { postsCount: increment(1) });
 
-      // Detect Mentions
       await handleMentions(content, docRef.id);
 
       setContent('');
       setCategory('General');
       setTags([]);
+      setScheduledAt('');
+      setShowScheduler(false);
       removeMedia();
     } catch (error) {
-      console.error("Signal Broadcast Failure:", error);
+      console.error("Posting Failure:", error);
     } finally {
       setUploading(false);
     }
   };
 
   return (
-    <div className="bg-brand-white dark:bg-brand-gray-950 border border-brand-gray-200 dark:border-brand-gray-800 rounded-[2.5rem] p-8 shadow-2xl mb-12 relative overflow-hidden">
+    <div className="bg-brand-white dark:bg-brand-gray-950 border border-brand-gray-200 dark:border-brand-gray-800 rounded-[2.5rem] p-8 shadow-2xl mb-12 relative overflow-hidden transition-all">
       <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-brand-black via-brand-gray-300 to-brand-black dark:from-brand-white dark:via-brand-gray-700 dark:to-brand-white opacity-10" />
       
       <div className="flex bg-brand-gray-50 dark:bg-brand-gray-900/50 p-2 rounded-2xl mb-8 space-x-1 border border-brand-gray-100 dark:border-brand-gray-800 overflow-x-auto scrollbar-hide">
         {[
-          { type: PostType.TEXT, icon: TextIcon, label: 'Standard' },
-          { type: PostType.IMAGE, icon: Image, label: 'Visual' },
-          { type: PostType.VIDEO, icon: Video, label: 'Cinema' },
-          { type: PostType.ARTICLE, icon: FileText, label: 'Intel' },
+          { type: PostType.TEXT, icon: TextIcon, label: 'Text' },
+          { type: PostType.IMAGE, icon: ImageIcon, label: 'Photo' },
+          { type: PostType.VIDEO, icon: VideoIcon, label: 'Video' },
+          { type: PostType.ARTICLE, icon: FileText, label: 'Article' },
         ].map((t) => (
           <button
             key={t.type}
@@ -197,44 +206,99 @@ const CreatePost: React.FC = () => {
         </div>
         <div className="flex-1">
           <div className="flex flex-wrap gap-3 mb-6">
+            {/* Visibility */}
             <div className="relative">
               <button 
-                onClick={() => setShowVisibilityMenu(!showVisibilityMenu)}
+                onClick={() => { setShowVisibilityMenu(!showVisibilityMenu); setShowCategoryMenu(false); }}
                 className="flex items-center space-x-3 px-4 py-2 bg-brand-gray-50 dark:bg-brand-gray-900 border border-brand-gray-200 dark:border-brand-gray-800 rounded-2xl text-[10px] font-black uppercase tracking-widest text-brand-gray-600 hover:text-brand-black dark:hover:text-brand-white transition-all shadow-sm"
               >
                 {visibility === 'public' ? <Globe size={14} /> : <Users size={14} />}
-                <span>{visibility === 'public' ? 'Public' : 'Followers'}</span>
+                <span>{visibility === 'public' ? 'Everyone' : 'Followers'}</span>
                 <ChevronDown size={12} className={showVisibilityMenu ? 'rotate-180' : ''} />
               </button>
               {showVisibilityMenu && (
-                <div className="absolute top-full left-0 mt-3 w-48 bg-brand-white dark:bg-brand-black border border-brand-gray-200 dark:border-brand-gray-800 rounded-2xl shadow-2xl z-50 overflow-hidden">
-                  <button onClick={() => { setVisibility('public'); setShowVisibilityMenu(false); }} className="w-full flex items-center space-x-4 px-6 py-4 text-[10px] font-black uppercase tracking-widest text-left hover:bg-brand-gray-50 dark:hover:bg-brand-gray-900 border-b border-brand-gray-50 dark:border-brand-gray-900">
-                    <Globe size={16} /> <span>Public</span>
+                <div className="absolute top-full left-0 mt-3 w-48 bg-brand-white dark:bg-brand-black border border-brand-gray-200 dark:border-brand-gray-800 rounded-2xl shadow-2xl z-50 overflow-hidden animate-in fade-in slide-in-from-top-2">
+                  <button onClick={() => { setVisibility('public'); setShowVisibilityMenu(false); }} className="w-full flex items-center justify-between px-6 py-4 text-[10px] font-black uppercase tracking-widest text-left hover:bg-brand-gray-50 dark:hover:bg-brand-gray-900 border-b border-brand-gray-50 dark:border-brand-gray-900">
+                    <div className="flex items-center space-x-4"><Globe size={16} /> <span>Everyone</span></div>
+                    {visibility === 'public' && <Check size={14} />}
                   </button>
-                  <button onClick={() => { setVisibility('followers'); setShowVisibilityMenu(false); }} className="w-full flex items-center space-x-4 px-6 py-4 text-[10px] font-black uppercase tracking-widest text-left hover:bg-brand-gray-50 dark:hover:bg-brand-gray-900">
-                    <Users size={16} /> <span>Followers</span>
+                  <button onClick={() => { setVisibility('followers'); setShowVisibilityMenu(false); }} className="w-full flex items-center justify-between px-6 py-4 text-[10px] font-black uppercase tracking-widest text-left hover:bg-brand-gray-50 dark:hover:bg-brand-gray-900">
+                    <div className="flex items-center space-x-4"><Users size={16} /> <span>Followers</span></div>
+                    {visibility === 'followers' && <Check size={14} />}
                   </button>
                 </div>
               )}
             </div>
 
-            <select 
-              value={category} 
-              onChange={e => setCategory(e.target.value)}
-              className="px-4 py-2 bg-brand-gray-50 dark:bg-brand-gray-900 border border-brand-gray-200 dark:border-brand-gray-800 rounded-2xl text-[10px] font-black uppercase tracking-widest text-brand-gray-600 outline-none focus:ring-1 focus:ring-brand-black dark:focus:ring-brand-white transition-all cursor-pointer"
+            {/* Category */}
+            <div className="relative">
+              <button 
+                onClick={() => { setShowCategoryMenu(!showCategoryMenu); setShowVisibilityMenu(false); }}
+                className="flex items-center space-x-3 px-4 py-2 bg-brand-gray-50 dark:bg-brand-gray-900 border border-brand-gray-200 dark:border-brand-gray-800 rounded-2xl text-[10px] font-black uppercase tracking-widest text-brand-gray-600 hover:text-brand-black dark:hover:text-brand-white transition-all shadow-sm"
+              >
+                <Tag size={14} />
+                <span>{category}</span>
+                <ChevronDown size={12} className={showCategoryMenu ? 'rotate-180' : ''} />
+              </button>
+              {showCategoryMenu && (
+                <div className="absolute top-full left-0 mt-3 w-48 bg-brand-white dark:bg-brand-black border border-brand-gray-200 dark:border-brand-gray-800 rounded-2xl shadow-2xl z-50 overflow-hidden animate-in fade-in slide-in-from-top-2">
+                  {categories.map((cat, idx) => (
+                    <button 
+                      key={cat}
+                      onClick={() => { setCategory(cat); setShowCategoryMenu(false); }} 
+                      className={`w-full flex items-center justify-between px-6 py-4 text-[10px] font-black uppercase tracking-widest text-left hover:bg-brand-gray-50 dark:hover:bg-brand-gray-900 ${idx !== categories.length - 1 ? 'border-b border-brand-gray-50 dark:border-brand-gray-900' : ''}`}
+                    >
+                      <span>{cat}</span>
+                      {category === cat && <Check size={14} />}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Scheduler */}
+            <button 
+              onClick={() => setShowScheduler(!showScheduler)}
+              className={`flex items-center space-x-3 px-4 py-2 border rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all shadow-sm ${
+                scheduledAt 
+                  ? 'bg-brand-black dark:bg-brand-white text-white dark:text-black border-brand-black dark:border-brand-white' 
+                  : 'bg-brand-gray-50 dark:bg-brand-gray-900 border-brand-gray-200 dark:border-brand-gray-800 text-brand-gray-600'
+              }`}
             >
-              {categories.map(cat => <option key={cat} value={cat}>{cat}</option>)}
-            </select>
+              <Clock size={14} />
+              <span>{scheduledAt ? 'Scheduled' : 'Pick Time'}</span>
+            </button>
           </div>
+
+          {showScheduler && (
+            <div className="mb-6 p-4 bg-brand-gray-50 dark:bg-brand-gray-900/50 border border-brand-gray-200 dark:border-brand-gray-800 rounded-2xl animate-in fade-in slide-in-from-top-2">
+              <div className="flex items-center justify-between mb-3">
+                <div className="flex items-center space-x-2 text-brand-gray-500">
+                  <Calendar size={14} />
+                  <span className="text-[10px] font-black uppercase tracking-widest">When to post?</span>
+                </div>
+                {scheduledAt && (
+                  <button onClick={() => setScheduledAt('')} className="text-[9px] font-black uppercase tracking-widest text-red-500">Clear</button>
+                )}
+              </div>
+              <input 
+                type="datetime-local" 
+                value={scheduledAt}
+                min={new Date().toISOString().slice(0, 16)}
+                onChange={(e) => setScheduledAt(e.target.value)}
+                className="w-full bg-brand-white dark:bg-brand-black border border-brand-gray-200 dark:border-brand-gray-800 rounded-xl px-4 py-3 text-xs font-bold outline-none focus:ring-1 focus:ring-brand-black dark:focus:ring-white transition-all"
+              />
+            </div>
+          )}
 
           <textarea
             value={content}
             onChange={(e) => setContent(e.target.value)}
-            placeholder="Broadcast your signal..."
+            placeholder="What's on your mind?"
             className="w-full bg-transparent border-none resize-none focus:ring-0 text-xl font-medium min-h-[100px] placeholder:text-brand-gray-300 dark:placeholder:text-brand-gray-700 leading-relaxed tracking-tight"
           />
 
-          {/* Tags Section */}
+          {/* Tags */}
           <div className="mt-4 flex flex-wrap gap-2">
             {tags.map(tag => (
               <span key={tag} className="flex items-center space-x-2 px-3 py-1 bg-brand-black dark:bg-brand-white text-white dark:text-black rounded-full text-[9px] font-black uppercase tracking-widest">
@@ -256,7 +320,7 @@ const CreatePost: React.FC = () => {
                 onClick={suggestTags}
                 disabled={analyzing || !content}
                 className={`p-2 rounded-full transition-all ${analyzing ? 'animate-spin text-brand-gray-400' : 'text-brand-black dark:text-brand-white hover:bg-brand-gray-100 dark:hover:bg-brand-gray-900'}`}
-                title="AI Topic Analysis"
+                title="AI Topics"
               >
                 {analyzing ? <Loader2 size={14} /> : <Wand2 size={14} />}
               </button>
@@ -279,7 +343,7 @@ const CreatePost: React.FC = () => {
           <div className="mt-8 flex items-center justify-between border-t border-brand-gray-50 dark:border-brand-gray-900/50 pt-8">
             <div className="flex items-center space-x-2 opacity-30">
               <Tag size={14} />
-              <p className="text-[9px] font-black uppercase tracking-widest">Topic Authenticated</p>
+              <p className="text-[9px] font-black uppercase tracking-widest">Post details</p>
             </div>
             <button 
               onClick={handleSubmit} 
@@ -287,7 +351,7 @@ const CreatePost: React.FC = () => {
               className="bg-brand-black dark:bg-brand-white text-white dark:text-black px-12 py-4 rounded-[1.5rem] font-black text-[10px] uppercase tracking-[0.3em] shadow-xl hover:opacity-90 active:scale-95 disabled:opacity-20 transition-all flex items-center space-x-3"
             >
               {uploading ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}
-              <span>{uploading ? 'Transmitting...' : 'Broadcast'}</span>
+              <span>{uploading ? 'Posting...' : (scheduledAt ? 'Schedule' : 'Post')}</span>
             </button>
           </div>
         </div>

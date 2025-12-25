@@ -1,8 +1,9 @@
+
 import React, { useState, useEffect, useMemo } from 'react';
 import * as firestoreModule from 'firebase/firestore';
 import { db } from '../firebase';
 import { Post, PostType, UserProfile } from '../types';
-import { LayoutGrid, Eye, Sparkles, Loader2, Play, Video, Heart, Search, Users, ChevronRight } from 'lucide-react';
+import { LayoutGrid, Eye, Sparkles, Loader2, Play, Video, Heart, Search, Users, ChevronRight, Tag } from 'lucide-react';
 import * as RouterNamespace from 'react-router-dom';
 
 const { collection, query, limit, onSnapshot, where, getDocs, orderBy, startAt, endAt } = firestoreModule as any;
@@ -14,9 +15,11 @@ const Explore: React.FC = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [userResults, setUserResults] = useState<UserProfile[]>([]);
   const [searching, setSearching] = useState(false);
+  const [selectedCategory, setSelectedCategory] = useState('All');
+
+  const categories = ['All', 'Tech', 'Design', 'Gaming', 'News', 'Art', 'General'];
 
   useEffect(() => {
-    // Discovery Signals: Query public posts for the default grid
     const q = query(
       collection(db, 'posts'),
       where('visibility', '==', 'public'),
@@ -26,7 +29,6 @@ const Explore: React.FC = () => {
     const unsubscribe = onSnapshot(q, (snapshot: any) => {
       const allPosts = snapshot.docs.map((doc: any) => ({ id: doc.id, ...doc.data() }) as Post);
       
-      // Strict Trending Logic
       allPosts.sort((a, b) => {
         const scoreA = (a.likesCount * 3) + (a.viewsCount / 5);
         const scoreB = (b.likesCount * 3) + (b.commentsCount / 5);
@@ -36,14 +38,13 @@ const Explore: React.FC = () => {
       setRawExplorePosts(allPosts);
       setLoading(false);
     }, (err: any) => {
-      console.error("Explore Retrieval Error:", err);
+      console.error("Explore fetch error:", err);
       setLoading(false);
     });
 
     return () => unsubscribe();
   }, []);
 
-  // User Search Implementation
   useEffect(() => {
     const handleSearch = async () => {
       if (!searchTerm.trim()) {
@@ -55,7 +56,6 @@ const Explore: React.FC = () => {
       setSearching(true);
       try {
         const lowerSearch = searchTerm.toLowerCase();
-        // Index-free prefix search approach
         const userQ = query(
           collection(db, 'users'),
           orderBy('username'),
@@ -68,7 +68,7 @@ const Explore: React.FC = () => {
         const results = snap.docs.map((doc: any) => ({ uid: doc.id, ...doc.data() }) as UserProfile);
         setUserResults(results);
       } catch (err) {
-        console.error("Search failure:", err);
+        console.error("Search failed:", err);
       } finally {
         setSearching(false);
       }
@@ -84,43 +84,59 @@ const Explore: React.FC = () => {
         const isVisual = p.type === PostType.IMAGE || p.type === PostType.VIDEO || p.type === PostType.REEL;
         const isTimePassed = p.scheduledAt ? p.scheduledAt.toMillis() <= now : true;
         const isActive = p.isPublished === true || isTimePassed;
-        return isVisual && isActive;
+        const matchesCategory = selectedCategory === 'All' || p.category === selectedCategory;
+        return isVisual && isActive && matchesCategory;
     });
-  }, [rawExplorePosts]);
+  }, [rawExplorePosts, selectedCategory]);
 
   return (
     <div className="max-w-6xl mx-auto py-12 px-6">
-      {/* Header & Command Search */}
       <div className="mb-16 space-y-10">
         <div>
-          <h1 className="text-6xl font-black italic tracking-tighter uppercase leading-none mb-4">Discovery</h1>
-          <p className="text-brand-gray-400 font-black tracking-[0.4em] text-[10px] uppercase opacity-60">Global Transmission Grid</p>
+          <h1 className="text-6xl font-black italic tracking-tighter uppercase leading-none mb-4">Explore</h1>
+          <p className="text-brand-gray-400 font-black tracking-[0.4em] text-[10px] uppercase opacity-60">Discover new things</p>
         </div>
 
-        {/* Search Command Bar */}
-        <div className="relative group max-w-2xl">
-          <Search className="absolute left-6 top-1/2 -translate-y-1/2 text-brand-gray-300 group-focus-within:text-brand-black dark:group-focus-within:text-brand-white transition-colors" size={20} />
-          <input 
-            type="text" 
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            placeholder="Search identity nodes..." 
-            className="w-full bg-brand-gray-50 dark:bg-brand-gray-950 border-2 border-brand-gray-100 dark:border-brand-gray-900 rounded-[2rem] py-5 pl-16 pr-6 focus:outline-none focus:border-brand-black dark:focus:border-brand-white transition-all text-sm font-bold tracking-tight shadow-inner"
-          />
-          {searching && (
-            <div className="absolute right-6 top-1/2 -translate-y-1/2">
-              <Loader2 size={18} className="animate-spin text-brand-gray-400" />
-            </div>
-          )}
+        <div className="flex flex-col md:flex-row md:items-center gap-6">
+          <div className="relative group flex-1">
+            <Search className="absolute left-6 top-1/2 -translate-y-1/2 text-brand-gray-300 group-focus-within:text-brand-black dark:group-focus-within:text-brand-white transition-colors" size={20} />
+            <input 
+              type="text" 
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              placeholder="Search for people..." 
+              className="w-full bg-brand-gray-50 dark:bg-brand-gray-950 border-2 border-brand-gray-100 dark:border-brand-gray-900 rounded-[2rem] py-5 pl-16 pr-6 focus:outline-none focus:border-brand-black dark:focus:border-brand-white transition-all text-sm font-bold tracking-tight shadow-inner"
+            />
+            {searching && (
+              <div className="absolute right-6 top-1/2 -translate-y-1/2">
+                <Loader2 size={18} className="animate-spin text-brand-gray-400" />
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div className="flex items-center space-x-2 overflow-x-auto scrollbar-hide pb-2">
+          {categories.map((cat) => (
+            <button
+              key={cat}
+              onClick={() => setSelectedCategory(cat)}
+              className={`flex-shrink-0 px-6 py-2.5 rounded-full text-[10px] font-black uppercase tracking-widest transition-all ${
+                selectedCategory === cat
+                  ? 'bg-brand-black dark:bg-brand-white text-white dark:text-black shadow-lg scale-105'
+                  : 'bg-brand-gray-50 dark:bg-brand-gray-900 text-brand-gray-400 hover:text-brand-black dark:hover:text-brand-white'
+              }`}
+            >
+              {cat}
+            </button>
+          ))}
         </div>
       </div>
 
-      {/* Search Results Display */}
       {searchTerm.trim() !== '' && (
         <section className="mb-20 animate-in fade-in slide-in-from-top-4 duration-500">
           <div className="flex items-center space-x-3 mb-8 px-2">
             <Users size={18} className="text-brand-gray-400" />
-            <h2 className="text-xs font-black uppercase tracking-[0.3em]">Identity Node Results</h2>
+            <h2 className="text-xs font-black uppercase tracking-[0.3em]">Users found</h2>
           </div>
           
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
@@ -145,18 +161,17 @@ const Explore: React.FC = () => {
             
             {!searching && userResults.length === 0 && (
               <div className="col-span-full py-10 text-center bg-brand-gray-50 dark:bg-brand-gray-950/30 rounded-[2.5rem] border-2 border-dashed border-brand-gray-100 dark:border-brand-gray-900">
-                <p className="text-[10px] font-black uppercase tracking-[0.4em] opacity-20 italic">No node identities matched "{searchTerm}"</p>
+                <p className="text-[10px] font-black uppercase tracking-[0.4em] opacity-20 italic">No people matched "{searchTerm}"</p>
               </div>
             )}
           </div>
         </section>
       )}
 
-      {/* ONLY Trending Visual Grid */}
       <section className={searchTerm.trim() !== '' ? 'opacity-40 grayscale pointer-events-none blur-sm transition-all duration-700' : 'transition-all duration-700'}>
         <div className="flex items-center justify-between mb-10 px-2">
           <h2 className="text-xs font-black uppercase tracking-[0.3em] flex items-center">
-            <LayoutGrid size={16} className="mr-3" /> Trending Visuals
+            <LayoutGrid size={16} className="mr-3" /> {selectedCategory === 'All' ? 'Trending Photos & Videos' : `${selectedCategory} Posts`}
           </h2>
         </div>
 
@@ -187,16 +202,16 @@ const Explore: React.FC = () => {
                   </div>
                 </div>
                 
-                {/* Modality Icons */}
                 <div className="absolute top-6 left-6 flex space-x-2">
                   {post.type === PostType.REEL && <div className="p-3 bg-brand-black/50 backdrop-blur-2xl rounded-2xl text-white shadow-lg"><Play size={14} fill="white" /></div>}
                   {post.type === PostType.VIDEO && <div className="p-3 bg-brand-black/50 backdrop-blur-2xl rounded-2xl text-white shadow-lg"><Video size={14} fill="white" /></div>}
+                  {post.category && <div className="p-2 px-3 bg-brand-white/10 backdrop-blur-2xl rounded-xl text-white shadow-lg text-[8px] font-black uppercase tracking-widest">{post.category}</div>}
                 </div>
               </div>
             ))}
             {trendingVisuals.length === 0 && (
               <div className="col-span-full text-center py-48 opacity-10">
-                <p className="font-black italic text-lg tracking-[0.4em] uppercase">No trending signals available.</p>
+                <p className="font-black italic text-lg tracking-[0.4em] uppercase">No posts available.</p>
               </div>
             )}
           </div>

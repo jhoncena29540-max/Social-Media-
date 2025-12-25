@@ -1,6 +1,5 @@
 
 import React, { useState, useEffect } from 'react';
-// Fix: Use namespaced import for firestore
 import * as firestoreModule from 'firebase/firestore';
 import { auth, db } from '../firebase';
 import { Notification as NotificationType } from '../types';
@@ -36,7 +35,7 @@ const Notifications: React.FC = () => {
         setError(null);
       },
       (err: any) => {
-        console.error("Firestore Notification Error:", err);
+        console.error("Notifications Error:", err);
         setLoading(false);
         setError(err.message);
       }
@@ -63,14 +62,7 @@ const Notifications: React.FC = () => {
       const ref = doc(db, 'notifications', n.id);
       await updateDoc(ref, { read: true });
     }
-    
-    if (n.postId) {
-      // Logic for post redirect - navigating to profile of sender or home with search for now 
-      // as specific post pages aren't implemented, or we can just go to the sender's profile
-      navigate(`/u/${n.senderUsername}`);
-    } else {
-      navigate(`/u/${n.senderUsername}`);
-    }
+    navigate(`/u/${n.senderUsername}`);
   };
 
   const getIcon = (type: string) => {
@@ -88,7 +80,7 @@ const Notifications: React.FC = () => {
     switch (n.type) {
       case 'like': return 'liked your post';
       case 'comment': return 'commented on your post';
-      case 'follow': return 'started following you';
+      case 'follow': return 'followed you';
       case 'mention': return 'mentioned you in a post';
       case 'reply': return 'replied to your comment';
       default: return 'interacted with you';
@@ -99,22 +91,22 @@ const Notifications: React.FC = () => {
     <div className="max-w-2xl mx-auto py-12 px-6">
       <div className="flex items-center justify-between mb-12">
         <div>
-          <h1 className="text-4xl font-black italic tracking-tighter uppercase leading-none mb-2">Alerts</h1>
-          <p className="text-[10px] font-black uppercase tracking-widest text-brand-gray-400 opacity-60">Real-time signal updates</p>
+          <h1 className="text-4xl font-black italic tracking-tighter uppercase leading-none mb-2">Notifications</h1>
+          <p className="text-[10px] font-black uppercase tracking-widest text-brand-gray-400 opacity-60">See what's happening</p>
         </div>
         <button 
           onClick={markAllAsRead}
           className="flex items-center space-x-3 px-6 py-3 bg-brand-gray-50 dark:bg-brand-gray-900 border border-brand-gray-100 dark:border-brand-gray-800 rounded-2xl text-[10px] font-black uppercase tracking-widest text-brand-gray-500 hover:text-brand-black dark:hover:text-brand-white transition-all shadow-sm active:scale-95"
         >
           <CheckCheck size={14} />
-          <span>Sync All Read</span>
+          <span>Mark read</span>
         </button>
       </div>
 
       {error && (
         <div className="mb-8 p-8 bg-brand-gray-50 dark:bg-brand-gray-950 border border-brand-gray-100 dark:border-brand-gray-900 rounded-[2.5rem] text-center">
           <AlertTriangle size={32} className="mx-auto mb-4 text-red-500" />
-          <p className="text-xs font-black uppercase tracking-widest mb-2">Signal Error</p>
+          <p className="text-xs font-black uppercase tracking-widest mb-2">Error</p>
           <p className="text-[10px] text-brand-gray-400 font-bold">{error}</p>
         </div>
       )}
@@ -149,7 +141,7 @@ const Notifications: React.FC = () => {
                   <span className="font-black italic">@{n.senderUsername}</span> {getMessage(n)}
                 </p>
                 <p className="text-[9px] text-brand-gray-400 mt-1 uppercase font-black tracking-widest italic opacity-50">
-                  {n.createdAt ? formatDistanceToNow(n.createdAt.toDate()) + ' ago' : 'Live'}
+                  {n.createdAt ? formatDistanceToNow(n.createdAt.toDate()) + ' ago' : 'Just now'}
                 </p>
               </div>
 
@@ -161,8 +153,8 @@ const Notifications: React.FC = () => {
         ) : !error && (
           <div className="text-center py-40 bg-brand-gray-50/50 dark:bg-brand-gray-950/20 rounded-[3rem] border-2 border-dashed border-brand-gray-100 dark:border-brand-gray-900 opacity-30">
             <AlertTriangle size={64} className="mx-auto mb-6 opacity-10" />
-            <p className="text-lg font-black italic tracking-[0.4em] uppercase">No Alerts detected.</p>
-            <p className="text-[10px] font-black uppercase tracking-widest mt-4">Node frequency is currently silent.</p>
+            <p className="text-lg font-black italic tracking-[0.4em] uppercase">No notifications.</p>
+            <p className="text-[10px] font-black uppercase tracking-widest mt-4">There's nothing here yet.</p>
           </div>
         )}
       </div>

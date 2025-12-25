@@ -76,6 +76,7 @@ export interface Comment {
   likesCount: number;
   replyCount?: number;
   createdAt: Timestamp;
+  moderationStatus?: 'flagged' | 'clean' | 'hidden';
 }
 
 export interface Notification {
