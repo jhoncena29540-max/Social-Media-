@@ -4,7 +4,7 @@ import { formatDistanceToNow, format } from 'date-fns';
 import { 
   Heart, MessageCircle, Share2, MoreHorizontal, Bookmark, Send, Globe, Users, 
   Copy, Check, Edit3, Trash2, ArrowUp, X, MessageSquareShare, Eye, Tag, Hash, Loader2, Clock, ShieldAlert,
-  ArrowUpDown
+  ArrowUpDown, ChevronDown, ChevronUp
 } from 'lucide-react';
 import { Post, Comment, PostType, UserRole } from '../types.ts';
 import { auth, db } from '../firebase.ts';
@@ -34,6 +34,7 @@ const PostCard: React.FC<PostCardProps> = ({ post: initialPost }) => {
   const [userRole, setUserRole] = useState<UserRole>(UserRole.USER);
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [isRemoving, setIsRemoving] = useState(false);
+  const [isExpanded, setIsExpanded] = useState(false);
   const hasIncrementedView = useRef(false);
   
   const [rawComments, setRawComments] = useState<Comment[]>([]);
@@ -56,6 +57,12 @@ const PostCard: React.FC<PostCardProps> = ({ post: initialPost }) => {
   const isFuture = useMemo(() => {
     return post.scheduledAt && post.scheduledAt.toMillis() > Date.now();
   }, [post.scheduledAt]);
+
+  const isArticle = post.type === PostType.ARTICLE;
+  const shouldTruncate = isArticle && post.content.length > 600;
+  const displayContent = shouldTruncate && !isExpanded 
+    ? post.content.substring(0, 600) + '...' 
+    : post.content;
 
   useEffect(() => {
     if (!auth.currentUser) return;
@@ -81,10 +88,6 @@ const PostCard: React.FC<PostCardProps> = ({ post: initialPost }) => {
     return () => clearTimeout(timer);
   }, [post.id, isFuture]);
 
-  /**
-   * RE-ENGINEERED: Index-Free Comment Fetching
-   * We avoid composite index requirements by using only one where clause.
-   */
   const fetchComments = useCallback(async (isInitial = true) => {
     if (!showComments) return;
     setLoadingComments(true);
@@ -103,7 +106,6 @@ const PostCard: React.FC<PostCardProps> = ({ post: initialPost }) => {
       const snap = await getDocs(q);
       const allFetched = snap.docs.map((d: any) => ({ id: d.id, ...d.data() } as Comment));
       
-      // Filter for top-level comments and sort manually in memory to avoid index requirements
       const topLevel = allFetched.filter(c => !c.parentId);
       topLevel.sort((a, b) => {
         if (sortBy === 'latest') {
@@ -122,7 +124,7 @@ const PostCard: React.FC<PostCardProps> = ({ post: initialPost }) => {
       setLastCommentDoc(snap.docs[snap.docs.length - 1] || null);
       setHasMoreComments(snap.docs.length === commentLimit);
     } catch (err) {
-      console.error("Index-free comment fetch failed:", err);
+      console.error("Comment fetch failed:", err);
     } finally {
       setLoadingComments(false);
     }
@@ -252,22 +254,6 @@ const PostCard: React.FC<PostCardProps> = ({ post: initialPost }) => {
     }
   };
 
-  const handleDeleteComment = async (commentId: string) => {
-    if (!window.confirm("Remove this comment?")) return;
-    try {
-      await deleteDoc(doc(db, 'comments', commentId));
-      await updateDoc(doc(db, 'posts', post.id), { commentsCount: increment(-1) });
-      setRawComments(prev => prev.filter(c => c.id !== commentId));
-    } catch (err) { console.error(err); }
-  };
-
-  const handleFlagComment = async (commentId: string) => {
-    try {
-      await updateDoc(doc(db, 'comments', commentId), { moderationStatus: 'flagged' });
-      alert("Comment flagged for review.");
-    } catch (err) { console.error(err); }
-  };
-
   const isModerator = userRole === UserRole.MODERATOR || userRole === UserRole.ADMIN;
   const isAuthor = auth.currentUser?.uid === post.authorId;
 
@@ -278,25 +264,15 @@ const PostCard: React.FC<PostCardProps> = ({ post: initialPost }) => {
   }
 
   return (
-    <article className={`bg-brand-white dark:bg-brand-gray-950 border border-brand-gray-200 dark:border-brand-gray-800 rounded-[2.5rem] overflow-hidden shadow-sm hover:shadow-2xl transition-all duration-700 transform hover:-translate-y-1 ${isFuture ? 'opacity-70' : ''}`}>
-      <div className="p-6 flex items-center justify-between">
+    <article className={`bg-brand-white dark:bg-brand-gray-950 border border-brand-gray-200 dark:border-brand-gray-800 rounded-[2.5rem] overflow-hidden shadow-sm hover:shadow-2xl transition-all duration-500 transform hover:-translate-y-1 ${isFuture ? 'opacity-70' : ''}`}>
+      <div className="p-7 flex items-center justify-between">
         <div className="flex items-center space-x-4">
-          <div className="w-12 h-12 rounded-full overflow-hidden bg-brand-gray-100 dark:bg-brand-gray-800 border-2 border-brand-white dark:border-brand-black shadow-sm transform transition-transform hover:scale-105">
+          <div className="w-12 h-12 rounded-full overflow-hidden bg-brand-gray-100 dark:bg-brand-gray-800 border-2 border-brand-white dark:border-brand-black shadow-sm transform transition-transform hover:scale-110">
             <img src={post.authorPhotoURL} alt="" className="w-full h-full object-cover" />
           </div>
           <div>
             <div className="flex items-center space-x-2">
               <p className="font-black text-xs uppercase tracking-[0.15em] hover:underline cursor-pointer">@{post.authorUsername}</p>
-              {post.category && (
-                <span className="px-2 py-0.5 bg-brand-black dark:bg-brand-white text-white dark:text-brand-black rounded-full text-[8px] font-black uppercase tracking-widest">
-                  {post.category}
-                </span>
-              )}
-              {isFuture && (
-                <span className="px-2 py-0.5 bg-brand-gray-100 text-brand-black rounded-full text-[8px] font-black uppercase tracking-widest flex items-center">
-                  <Clock size={8} className="mr-1" /> Scheduled
-                </span>
-              )}
             </div>
             <p className="text-[9px] text-brand-gray-400 font-black uppercase tracking-widest italic mt-0.5">
               {isFuture ? (
@@ -312,7 +288,7 @@ const PostCard: React.FC<PostCardProps> = ({ post: initialPost }) => {
             <MoreHorizontal size={22} />
           </button>
           {showMenu && (
-             <div className="absolute right-0 mt-3 w-56 bg-brand-white dark:bg-brand-black border border-brand-gray-200 dark:border-brand-gray-800 rounded-3xl shadow-2xl z-50 py-3 overflow-hidden animate-in fade-in slide-in-from-top-2">
+             <div className="absolute right-0 mt-3 w-56 bg-brand-white dark:bg-brand-black border border-brand-gray-200 dark:border-brand-gray-800 rounded-[2rem] shadow-2xl z-50 py-3 overflow-hidden animate-in fade-in slide-in-from-top-2">
                 <button onClick={handleCopyLink} className="w-full text-left px-5 py-3 text-[10px] font-black uppercase tracking-widest hover:bg-brand-gray-50 dark:hover:bg-brand-gray-900 flex items-center space-x-4">
                    {copied ? <Check size={16} className="text-green-500" /> : <Copy size={16} />} 
                    <span>{copied ? 'Copied Link' : 'Copy Link'}</span>
@@ -332,13 +308,38 @@ const PostCard: React.FC<PostCardProps> = ({ post: initialPost }) => {
         </div>
       </div>
 
-      <div className="px-8 pb-4">
-        <p className="whitespace-pre-wrap text-lg font-medium mb-4 leading-relaxed tracking-tight">{post.content}</p>
+      <div className="px-10 pb-6">
+        {isArticle && post.title && (
+          <h2 className="text-3xl font-black italic tracking-tighter uppercase mb-4 leading-none text-brand-black dark:text-brand-white">{post.title}</h2>
+        )}
+        
+        <p className={`whitespace-pre-wrap ${isArticle ? 'text-lg leading-relaxed' : 'text-xl leading-relaxed'} font-medium mb-6 tracking-tight text-brand-black dark:text-brand-white`}>
+          {displayContent}
+        </p>
+
+        {shouldTruncate && (
+          <button 
+            onClick={() => setIsExpanded(!isExpanded)}
+            className="flex items-center space-x-2 text-[10px] font-black uppercase tracking-[0.3em] text-brand-gray-400 hover:text-brand-black dark:hover:text-brand-white transition-all mb-8"
+          >
+            {isExpanded ? (
+              <>
+                <span>Collapse Article</span>
+                <ChevronUp size={14} />
+              </>
+            ) : (
+              <>
+                <span>Read Full Article</span>
+                <ChevronDown size={14} />
+              </>
+            )}
+          </button>
+        )}
         
         {post.tags && post.tags.length > 0 && (
-          <div className="flex flex-wrap gap-2 mb-6">
+          <div className="flex flex-wrap gap-2 mb-8">
             {post.tags.map(tag => (
-              <span key={tag} className="flex items-center space-x-1.5 text-[9px] font-black uppercase tracking-widest text-brand-gray-400 hover:text-brand-black dark:hover:text-brand-white cursor-pointer transition-colors px-2 py-1 bg-brand-gray-50 dark:bg-brand-gray-900 rounded-lg">
+              <span key={tag} className="flex items-center space-x-1.5 text-[9px] font-black uppercase tracking-widest text-brand-gray-400 hover:text-brand-black dark:hover:text-brand-white cursor-pointer transition-colors px-3 py-1.5 bg-brand-gray-50 dark:bg-brand-gray-900 rounded-xl border border-transparent hover:border-brand-gray-200 dark:hover:border-brand-gray-800">
                 <Hash size={10} />
                 <span>{tag}</span>
               </span>
@@ -347,38 +348,38 @@ const PostCard: React.FC<PostCardProps> = ({ post: initialPost }) => {
         )}
 
         {post.mediaURL && (
-          <div className="rounded-[2rem] overflow-hidden border border-brand-gray-100 dark:border-brand-gray-900 group/media relative shadow-inner bg-brand-gray-50 dark:bg-brand-gray-900 mb-4">
+          <div className="rounded-[2.5rem] overflow-hidden border border-brand-gray-100 dark:border-brand-gray-900 group/media relative shadow-xl bg-brand-gray-50 dark:bg-brand-gray-900 mb-6 aspect-auto max-h-[700px] flex items-center justify-center">
             {post.type === PostType.VIDEO || post.type === PostType.REEL ? (
               <video src={post.mediaURL} controls className="w-full max-h-[700px] object-contain bg-black" />
             ) : (
-              <img src={post.mediaURL} alt="" className="w-full h-auto max-h-[700px] object-cover transition-transform duration-1000 group-hover/media:scale-105" />
+              <img src={post.mediaURL} alt="" className="w-full h-auto max-h-[700px] object-cover transition-transform duration-1000 group-hover/media:scale-[1.02]" />
             )}
           </div>
         )}
       </div>
 
-      <div className="px-8 py-5 border-t border-brand-gray-50 dark:border-brand-gray-900/50 flex items-center justify-between">
-        <div className="flex items-center space-x-8">
+      <div className="px-10 py-6 border-t border-brand-gray-50 dark:border-brand-gray-900/50 flex items-center justify-between bg-brand-gray-50/30 dark:bg-brand-gray-900/10">
+        <div className="flex items-center space-x-10">
           <button 
             onClick={handleLike} 
             disabled={isFuture}
-            className={`flex items-center space-x-2.5 transition-all duration-300 relative ${isLiked ? 'text-red-500' : 'text-brand-gray-400 hover:text-red-500'} ${isFuture ? 'opacity-30' : ''}`}
+            className={`flex items-center space-x-3 transition-all duration-300 relative ${isLiked ? 'text-red-500' : 'text-brand-gray-400 hover:text-red-500'} ${isFuture ? 'opacity-30' : ''}`}
           >
             <div className={`transition-transform duration-300 ${likeAnimating ? 'scale-150' : 'scale-100'}`}>
               <Heart size={24} fill={isLiked ? 'currentColor' : 'none'} strokeWidth={isLiked ? 0 : 2} />
             </div>
-            <span className="text-[11px] font-black italic">{likesCount}</span>
+            <span className="text-xs font-black italic tracking-tighter">{likesCount}</span>
           </button>
           <button 
             onClick={() => !isFuture && setShowComments(!showComments)} 
-            className={`flex items-center space-x-2.5 transition-all ${showComments ? 'text-brand-black dark:text-brand-white' : 'text-brand-gray-400'} ${isFuture ? 'opacity-30' : ''}`}
+            className={`flex items-center space-x-3 transition-all ${showComments ? 'text-brand-black dark:text-brand-white' : 'text-brand-gray-400 hover:text-brand-black'} ${isFuture ? 'opacity-30' : ''}`}
           >
             <MessageCircle size={24} />
-            <span className="text-[11px] font-black italic">{post.commentsCount}</span>
+            <span className="text-xs font-black italic tracking-tighter">{post.commentsCount}</span>
           </button>
-          <div className="flex items-center space-x-2.5 text-brand-gray-400 cursor-default">
+          <div className="flex items-center space-x-3 text-brand-gray-400 cursor-default">
             <Eye size={22} />
-            <span className="text-[11px] font-black italic">{viewsCount}</span>
+            <span className="text-xs font-black italic tracking-tighter">{viewsCount}</span>
           </div>
           <button className={`text-brand-gray-400 hover:text-brand-black dark:hover:text-brand-white transition-all transform active:scale-90 ${isFuture ? 'opacity-30' : ''}`}>
             <Share2 size={24} />
@@ -387,27 +388,27 @@ const PostCard: React.FC<PostCardProps> = ({ post: initialPost }) => {
         <button 
           onClick={handleSaveToggle} 
           disabled={isFuture}
-          className={`${isSaved ? 'text-brand-black dark:text-brand-white' : 'text-brand-gray-400'} ${isFuture ? 'opacity-30' : ''} transform active:scale-90`}
+          className={`transition-all transform active:scale-90 ${isSaved ? 'text-brand-black dark:text-brand-white' : 'text-brand-gray-400 hover:text-brand-black'} ${isFuture ? 'opacity-30' : ''}`}
         >
           <Bookmark size={24} fill={isSaved ? 'currentColor' : 'none'} />
         </button>
       </div>
 
       {showComments && !isFuture && (
-        <div className="px-8 py-8 border-t border-brand-gray-100 dark:border-brand-gray-900 bg-brand-gray-50 dark:bg-brand-gray-950/40 animate-in slide-in-from-top-4 duration-300">
+        <div className="px-10 py-10 border-t border-brand-gray-100 dark:border-brand-gray-900 bg-brand-gray-50 dark:bg-brand-gray-950/40 animate-in slide-in-from-top-4 duration-500">
           
           <div className="flex items-center justify-between mb-8">
-            <p className="text-[10px] font-black uppercase tracking-[0.2em] text-brand-gray-400">Discussion</p>
-            <div className="flex items-center space-x-4">
+            <p className="text-[10px] font-black uppercase tracking-[0.3em] text-brand-gray-400">Discussion</p>
+            <div className="flex items-center space-x-6">
               <button 
                 onClick={() => setSortBy('latest')} 
-                className={`text-[9px] font-black uppercase tracking-widest transition-colors ${sortBy === 'latest' ? 'text-brand-black dark:text-brand-white' : 'text-brand-gray-400'}`}
+                className={`text-[9px] font-black uppercase tracking-widest transition-colors ${sortBy === 'latest' ? 'text-brand-black dark:text-brand-white' : 'text-brand-gray-400 hover:text-brand-black'}`}
               >
                 Latest
               </button>
               <button 
                 onClick={() => setSortBy('relevant')} 
-                className={`text-[9px] font-black uppercase tracking-widest transition-colors ${sortBy === 'relevant' ? 'text-brand-black dark:text-brand-white' : 'text-brand-gray-400'}`}
+                className={`text-[9px] font-black uppercase tracking-widest transition-colors ${sortBy === 'relevant' ? 'text-brand-black dark:text-brand-white' : 'text-brand-gray-400 hover:text-brand-black'}`}
               >
                 Relevant
               </button>
@@ -415,28 +416,28 @@ const PostCard: React.FC<PostCardProps> = ({ post: initialPost }) => {
             </div>
           </div>
 
-          <form onSubmit={handleCommentSubmit} className="flex flex-col space-y-3 mb-10">
+          <form onSubmit={handleCommentSubmit} className="flex flex-col space-y-4 mb-10">
             <div className="flex items-center space-x-4">
               <input 
                 value={newComment} 
                 onChange={e => setNewComment(e.target.value)} 
-                placeholder="Add a comment..." 
-                className="flex-1 bg-brand-white dark:bg-brand-black border border-brand-gray-200 dark:border-brand-gray-800 rounded-[1.5rem] px-6 py-4 text-sm outline-none shadow-inner transition-all focus:border-brand-black dark:focus:border-brand-white" 
+                placeholder="Share your thoughts..." 
+                className="flex-1 bg-brand-white dark:bg-brand-black border border-brand-gray-200 dark:border-brand-gray-800 rounded-[1.5rem] px-6 py-4 text-sm outline-none shadow-inner transition-all focus:border-brand-black dark:focus:border-brand-white font-medium" 
               />
               <button disabled={!newComment.trim() || submittingComment} className="p-4 bg-brand-black dark:bg-brand-white text-white dark:text-black rounded-2xl shadow-xl disabled:opacity-20 transition-all active:scale-95">
-                {submittingComment ? <Loader2 size={20} className="animate-spin" /> : <Send size={20} />}
+                {submittingComment ? <Loader2 size={22} className="animate-spin" /> : <Send size={22} />}
               </button>
             </div>
           </form>
 
-          <div className="space-y-8">
+          <div className="space-y-10">
             {rawComments.map(comment => (
               <CommentItem 
                 key={comment.id} 
                 comment={comment} 
                 postId={post.id}
-                onDelete={handleDeleteComment}
-                onFlag={handleFlagComment}
+                onDelete={(id) => setRawComments(prev => prev.filter(c => c.id !== id))}
+                onFlag={() => {}}
               />
             ))}
           </div>
@@ -446,9 +447,9 @@ const PostCard: React.FC<PostCardProps> = ({ post: initialPost }) => {
               <button 
                 onClick={() => fetchComments(false)} 
                 disabled={loadingComments}
-                className="px-10 py-4 bg-brand-white dark:bg-brand-black border border-brand-gray-100 dark:border-brand-gray-900 rounded-2xl text-[10px] font-black uppercase tracking-widest hover:bg-brand-gray-50 transition-all disabled:opacity-50"
+                className="px-12 py-5 bg-brand-white dark:bg-brand-black border border-brand-gray-100 dark:border-brand-gray-900 rounded-[1.5rem] text-[10px] font-black uppercase tracking-[0.3em] hover:bg-brand-gray-50 dark:hover:bg-brand-gray-900 transition-all disabled:opacity-50 shadow-sm"
               >
-                {loadingComments ? <Loader2 size={16} className="animate-spin" /> : 'Load More Comments'}
+                {loadingComments ? <Loader2 size={16} className="animate-spin" /> : 'Load More'}
               </button>
             </div>
           )}

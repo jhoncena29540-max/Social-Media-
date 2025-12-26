@@ -44,6 +44,7 @@ export interface Post {
   type: PostType;
   category?: string; // Standard Category (Tech, Design, etc.)
   tags: string[]; // RAG-based topic tags for discovery
+  title?: string; // Specifically for Article types
   content: string;
   mediaURL?: string;
   thumbnailURL?: string;

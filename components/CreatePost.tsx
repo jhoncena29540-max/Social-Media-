@@ -4,19 +4,20 @@ import * as firestoreModule from 'firebase/firestore';
 import * as storageModule from 'firebase/storage';
 import { auth, db, storage } from '../firebase';
 import { 
-  Image as ImageIcon, Video as VideoIcon, FileText, Send, X, Type as TextIcon, 
-  Globe, Users, ChevronDown, Sparkles, 
-  Loader2, Hash, Wand2, Tag, Clock, Calendar, Check
+  Image as ImageIcon, Video as VideoIcon, Send, X, Type as TextIcon, 
+  Globe, Users, ChevronDown, 
+  Loader2, Hash, Wand2, Clock, Calendar, Check, Layers, BookOpen, Timer, Zap
 } from 'lucide-react';
 import { PostType } from '../types';
 import { GoogleGenAI, Type } from "@google/genai";
+import { addHours, addDays, format, startOfHour, addMinutes } from 'date-fns';
 
 const { collection, addDoc, serverTimestamp, doc, updateDoc, increment, Timestamp, query, where, getDocs, limit } = firestoreModule as any;
 const { ref, uploadBytes, getDownloadURL } = storageModule as any;
 
 const CreatePost: React.FC = () => {
   const [content, setContent] = useState('');
-  const [category, setCategory] = useState('General');
+  const [title, setTitle] = useState('');
   const [tags, setTags] = useState<string[]>([]);
   const [tagInput, setTagInput] = useState('');
   const [uploading, setUploading] = useState(false);
@@ -26,13 +27,19 @@ const CreatePost: React.FC = () => {
   const [postType, setPostType] = useState<PostType>(PostType.TEXT);
   const [visibility, setVisibility] = useState<'public' | 'followers'>('public');
   const [showVisibilityMenu, setShowVisibilityMenu] = useState(false);
-  const [showCategoryMenu, setShowCategoryMenu] = useState(false);
   
   const [scheduledAt, setScheduledAt] = useState<string>('');
   const [showScheduler, setShowScheduler] = useState(false);
   
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const categories = ['General', 'Tech', 'Design', 'Gaming', 'News', 'Art'];
+
+  const postTypes = [
+    { type: PostType.TEXT, icon: TextIcon, label: 'Text' },
+    { type: PostType.IMAGE, icon: ImageIcon, label: 'Photo' },
+    { type: PostType.VIDEO, icon: VideoIcon, label: 'Video' },
+    { type: PostType.REEL, icon: Layers, label: 'Reel' },
+    { type: PostType.ARTICLE, icon: BookOpen, label: 'Article' },
+  ];
 
   const suggestTags = async () => {
     if (!content.trim()) return;
@@ -41,7 +48,7 @@ const CreatePost: React.FC = () => {
       const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
       const response = await ai.models.generateContent({
         model: "gemini-3-flash-preview",
-        contents: `Analyze this social media post content and suggest 3-5 relevant short topic tags. Content: "${content}". Output only as a JSON array of strings.`,
+        contents: `Analyze this social media post content and suggest 3-5 relevant short topic tags. Content: "${title} ${content}". Output only as a JSON array of strings.`,
         config: {
           responseMimeType: "application/json",
           responseSchema: {
@@ -72,7 +79,9 @@ const CreatePost: React.FC = () => {
   const removeMedia = () => {
     setSelectedMedia(null);
     setMediaPreview(null);
-    setPostType(PostType.TEXT);
+    if (postType !== PostType.ARTICLE) {
+        setPostType(PostType.TEXT);
+    }
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
@@ -89,35 +98,9 @@ const CreatePost: React.FC = () => {
     setTags(tags.filter(t => t !== tagToRemove));
   };
 
-  const handleMentions = async (postContent: string, postId: string) => {
-    const mentionRegex = /@(\w+)/g;
-    const mentions = postContent.match(mentionRegex);
-    if (!mentions || !auth.currentUser) return;
-
-    for (const mention of mentions) {
-      const username = mention.slice(1).toLowerCase();
-      if (username === auth.currentUser.displayName?.toLowerCase()) continue;
-
-      try {
-        const q = query(collection(db, 'users'), where('username', '==', username), limit(1));
-        const snap = await getDocs(q);
-        if (!snap.empty) {
-          const recipientId = snap.docs[0].id;
-          await addDoc(collection(db, 'notifications'), {
-            recipientId,
-            senderId: auth.currentUser.uid,
-            senderUsername: auth.currentUser.displayName || 'Anonymous',
-            senderPhotoURL: auth.currentUser.photoURL || '',
-            type: 'mention',
-            postId,
-            read: false,
-            createdAt: serverTimestamp()
-          });
-        }
-      } catch (err) {
-        console.error("Mention failed:", err);
-      }
-    }
+  const setPresetTime = (hours: number) => {
+    const target = addHours(new Date(), hours);
+    setScheduledAt(format(target, "yyyy-MM-dd'T'HH:mm"));
   };
 
   const handleSubmit = async () => {
@@ -135,12 +118,11 @@ const CreatePost: React.FC = () => {
       const scheduleDate = scheduledAt ? new Date(scheduledAt) : null;
       const isFuture = scheduleDate && scheduleDate.getTime() > Date.now();
 
-      const postData = {
+      const postData: any = {
         authorId: auth.currentUser.uid,
         authorUsername: auth.currentUser.displayName || 'user',
         authorPhotoURL: auth.currentUser.photoURL || '',
         type: postType,
-        category,
         tags,
         content,
         mediaURL,
@@ -153,13 +135,15 @@ const CreatePost: React.FC = () => {
         visibility: visibility
       };
 
-      const docRef = await addDoc(collection(db, 'posts'), postData);
+      if (postType === PostType.ARTICLE && title) {
+        postData.title = title;
+      }
+
+      await addDoc(collection(db, 'posts'), postData);
       await updateDoc(doc(db, 'users', auth.currentUser.uid), { postsCount: increment(1) });
 
-      await handleMentions(content, docRef.id);
-
       setContent('');
-      setCategory('General');
+      setTitle('');
       setTags([]);
       setScheduledAt('');
       setShowScheduler(false);
@@ -175,29 +159,27 @@ const CreatePost: React.FC = () => {
     <div className="bg-brand-white dark:bg-brand-gray-950 border border-brand-gray-200 dark:border-brand-gray-800 rounded-[2.5rem] p-8 shadow-2xl mb-12 relative overflow-hidden transition-all">
       <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-brand-black via-brand-gray-300 to-brand-black dark:from-brand-white dark:via-brand-gray-700 dark:to-brand-white opacity-10" />
       
-      <div className="flex bg-brand-gray-50 dark:bg-brand-gray-900/50 p-2 rounded-2xl mb-8 space-x-1 border border-brand-gray-100 dark:border-brand-gray-800 overflow-x-auto scrollbar-hide">
-        {[
-          { type: PostType.TEXT, icon: TextIcon, label: 'Text' },
-          { type: PostType.IMAGE, icon: ImageIcon, label: 'Photo' },
-          { type: PostType.VIDEO, icon: VideoIcon, label: 'Video' },
-          { type: PostType.ARTICLE, icon: FileText, label: 'Article' },
-        ].map((t) => (
-          <button
-            key={t.type}
-            onClick={() => { 
-              setPostType(t.type); 
-              if (t.type === PostType.IMAGE || t.type === PostType.VIDEO) fileInputRef.current?.click(); 
-            }}
-            className={`flex-shrink-0 flex items-center justify-center space-x-2 py-3 px-4 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${
-              postType === t.type 
-                ? 'bg-brand-black dark:bg-brand-white text-white dark:text-black shadow-lg' 
-                : 'text-brand-gray-400 hover:text-brand-black dark:hover:text-brand-white'
-            }`}
-          >
-            <t.icon size={14} />
-            <span>{t.label}</span>
-          </button>
-        ))}
+      <div className="mb-10">
+        <p className="text-[10px] font-black uppercase tracking-[0.3em] text-brand-gray-400 ml-4 mb-4">Select Format</p>
+        <div className="inline-flex p-1.5 bg-brand-gray-50 dark:bg-brand-gray-900 border border-brand-gray-100 dark:border-brand-gray-800 rounded-2xl overflow-x-auto scrollbar-hide max-w-full">
+          {postTypes.map((t) => (
+            <button
+              key={t.type}
+              onClick={() => { 
+                setPostType(t.type); 
+                if (t.type === PostType.IMAGE || t.type === PostType.VIDEO || t.type === PostType.REEL) fileInputRef.current?.click(); 
+              }}
+              className={`flex items-center space-x-3 py-3 px-6 rounded-xl transition-all duration-300 whitespace-nowrap ${
+                postType === t.type 
+                  ? 'bg-brand-black dark:bg-brand-white text-white dark:text-black shadow-lg scale-100' 
+                  : 'text-brand-gray-400 hover:text-brand-black dark:hover:text-brand-white'
+              }`}
+            >
+              <t.icon size={16} strokeWidth={postType === t.type ? 2.5 : 2} />
+              <span className="text-[10px] font-black uppercase tracking-widest">{t.label}</span>
+            </button>
+          ))}
+        </div>
       </div>
 
       <div className="flex space-x-6 md:space-x-8">
@@ -206,10 +188,9 @@ const CreatePost: React.FC = () => {
         </div>
         <div className="flex-1">
           <div className="flex flex-wrap gap-3 mb-6">
-            {/* Visibility */}
             <div className="relative">
               <button 
-                onClick={() => { setShowVisibilityMenu(!showVisibilityMenu); setShowCategoryMenu(false); }}
+                onClick={() => setShowVisibilityMenu(!showVisibilityMenu)}
                 className="flex items-center space-x-3 px-4 py-2 bg-brand-gray-50 dark:bg-brand-gray-900 border border-brand-gray-200 dark:border-brand-gray-800 rounded-2xl text-[10px] font-black uppercase tracking-widest text-brand-gray-600 hover:text-brand-black dark:hover:text-brand-white transition-all shadow-sm"
               >
                 {visibility === 'public' ? <Globe size={14} /> : <Users size={14} />}
@@ -230,75 +211,84 @@ const CreatePost: React.FC = () => {
               )}
             </div>
 
-            {/* Category */}
-            <div className="relative">
-              <button 
-                onClick={() => { setShowCategoryMenu(!showCategoryMenu); setShowVisibilityMenu(false); }}
-                className="flex items-center space-x-3 px-4 py-2 bg-brand-gray-50 dark:bg-brand-gray-900 border border-brand-gray-200 dark:border-brand-gray-800 rounded-2xl text-[10px] font-black uppercase tracking-widest text-brand-gray-600 hover:text-brand-black dark:hover:text-brand-white transition-all shadow-sm"
-              >
-                <Tag size={14} />
-                <span>{category}</span>
-                <ChevronDown size={12} className={showCategoryMenu ? 'rotate-180' : ''} />
-              </button>
-              {showCategoryMenu && (
-                <div className="absolute top-full left-0 mt-3 w-48 bg-brand-white dark:bg-brand-black border border-brand-gray-200 dark:border-brand-gray-800 rounded-2xl shadow-2xl z-50 overflow-hidden animate-in fade-in slide-in-from-top-2">
-                  {categories.map((cat, idx) => (
-                    <button 
-                      key={cat}
-                      onClick={() => { setCategory(cat); setShowCategoryMenu(false); }} 
-                      className={`w-full flex items-center justify-between px-6 py-4 text-[10px] font-black uppercase tracking-widest text-left hover:bg-brand-gray-50 dark:hover:bg-brand-gray-900 ${idx !== categories.length - 1 ? 'border-b border-brand-gray-50 dark:border-brand-gray-900' : ''}`}
-                    >
-                      <span>{cat}</span>
-                      {category === cat && <Check size={14} />}
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-
-            {/* Scheduler */}
             <button 
               onClick={() => setShowScheduler(!showScheduler)}
               className={`flex items-center space-x-3 px-4 py-2 border rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all shadow-sm ${
                 scheduledAt 
                   ? 'bg-brand-black dark:bg-brand-white text-white dark:text-black border-brand-black dark:border-brand-white' 
-                  : 'bg-brand-gray-50 dark:bg-brand-gray-900 border-brand-gray-200 dark:border-brand-gray-800 text-brand-gray-600'
+                  : 'bg-brand-gray-50 dark:bg-brand-gray-900 border-brand-gray-200 dark:border-brand-gray-800 text-brand-gray-600 hover:text-brand-black'
               }`}
             >
               <Clock size={14} />
-              <span>{scheduledAt ? 'Scheduled' : 'Pick Time'}</span>
+              <span>{scheduledAt ? `Scheduled: ${format(new Date(scheduledAt), 'MMM d, HH:mm')}` : 'Pick Time'}</span>
             </button>
           </div>
 
           {showScheduler && (
-            <div className="mb-6 p-4 bg-brand-gray-50 dark:bg-brand-gray-900/50 border border-brand-gray-200 dark:border-brand-gray-800 rounded-2xl animate-in fade-in slide-in-from-top-2">
-              <div className="flex items-center justify-between mb-3">
-                <div className="flex items-center space-x-2 text-brand-gray-500">
-                  <Calendar size={14} />
-                  <span className="text-[10px] font-black uppercase tracking-widest">When to post?</span>
+            <div className="mb-8 p-6 bg-brand-gray-50 dark:bg-brand-gray-900/50 border border-brand-gray-200 dark:border-brand-gray-800 rounded-[2rem] animate-in fade-in slide-in-from-top-4 duration-300">
+              <div className="flex items-center justify-between mb-6">
+                <div className="flex items-center space-x-3 text-brand-black dark:text-brand-white">
+                  <Timer size={16} className="text-brand-black dark:text-brand-white" />
+                  <span className="text-[11px] font-black uppercase tracking-[0.2em]">Post Scheduler</span>
                 </div>
                 {scheduledAt && (
-                  <button onClick={() => setScheduledAt('')} className="text-[9px] font-black uppercase tracking-widest text-red-500">Clear</button>
+                  <button 
+                    onClick={() => { setScheduledAt(''); setShowScheduler(false); }} 
+                    className="flex items-center space-x-2 text-[10px] font-black uppercase tracking-widest text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 px-4 py-2 rounded-xl transition-all"
+                  >
+                    <Zap size={12} />
+                    <span>Post Now</span>
+                  </button>
                 )}
               </div>
-              <input 
-                type="datetime-local" 
-                value={scheduledAt}
-                min={new Date().toISOString().slice(0, 16)}
-                onChange={(e) => setScheduledAt(e.target.value)}
-                className="w-full bg-brand-white dark:bg-brand-black border border-brand-gray-200 dark:border-brand-gray-800 rounded-xl px-4 py-3 text-xs font-bold outline-none focus:ring-1 focus:ring-brand-black dark:focus:ring-white transition-all"
-              />
+              
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-6">
+                {[
+                  { label: '1 Hour', value: 1 },
+                  { label: '3 Hours', value: 3 },
+                  { label: 'Tomorrow', value: 24 },
+                  { label: '2 Days', value: 48 },
+                ].map(preset => (
+                  <button
+                    key={preset.label}
+                    onClick={() => setPresetTime(preset.value)}
+                    className="py-3 px-4 bg-brand-white dark:bg-brand-black border border-brand-gray-200 dark:border-brand-gray-800 rounded-xl text-[9px] font-black uppercase tracking-widest hover:border-brand-black dark:hover:border-white transition-all shadow-sm active:scale-95"
+                  >
+                    +{preset.label}
+                  </button>
+                ))}
+              </div>
+
+              <div className="relative group">
+                <Calendar className="absolute left-4 top-1/2 -translate-y-1/2 text-brand-gray-400 group-focus-within:text-brand-black transition-colors" size={16} />
+                <input 
+                  type="datetime-local" 
+                  value={scheduledAt}
+                  min={new Date().toISOString().slice(0, 16)}
+                  onChange={(e) => setScheduledAt(e.target.value)}
+                  className="w-full bg-brand-white dark:bg-brand-black border border-brand-gray-200 dark:border-brand-gray-800 rounded-xl pl-12 pr-4 py-4 text-xs font-bold outline-none focus:ring-1 focus:ring-brand-black dark:focus:ring-white transition-all shadow-inner"
+                />
+              </div>
+              <p className="mt-4 text-[9px] text-brand-gray-400 font-bold uppercase tracking-widest italic text-center">Your post will automatically go live at the selected time.</p>
             </div>
+          )}
+
+          {postType === PostType.ARTICLE && (
+            <input
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              placeholder="Article Title"
+              className="w-full bg-transparent border-none focus:ring-0 text-3xl font-black italic tracking-tighter uppercase mb-4 placeholder:text-brand-gray-200 dark:placeholder:text-brand-gray-800"
+            />
           )}
 
           <textarea
             value={content}
             onChange={(e) => setContent(e.target.value)}
-            placeholder="What's on your mind?"
-            className="w-full bg-transparent border-none resize-none focus:ring-0 text-xl font-medium min-h-[100px] placeholder:text-brand-gray-300 dark:placeholder:text-brand-gray-700 leading-relaxed tracking-tight"
+            placeholder={postType === PostType.ARTICLE ? "Write your detailed article here..." : "What's on your mind?"}
+            className={`w-full bg-transparent border-none resize-none focus:ring-0 font-medium placeholder:text-brand-gray-300 dark:placeholder:text-brand-gray-700 leading-relaxed tracking-tight ${postType === PostType.ARTICLE ? 'text-lg min-h-[300px]' : 'text-xl min-h-[100px]'}`}
           />
 
-          {/* Tags */}
           <div className="mt-4 flex flex-wrap gap-2">
             {tags.map(tag => (
               <span key={tag} className="flex items-center space-x-2 px-3 py-1 bg-brand-black dark:bg-brand-white text-white dark:text-black rounded-full text-[9px] font-black uppercase tracking-widest">
@@ -342,8 +332,8 @@ const CreatePost: React.FC = () => {
 
           <div className="mt-8 flex items-center justify-between border-t border-brand-gray-50 dark:border-brand-gray-900/50 pt-8">
             <div className="flex items-center space-x-2 opacity-30">
-              <Tag size={14} />
-              <p className="text-[9px] font-black uppercase tracking-widest">Post details</p>
+              <Clock size={14} />
+              <p className="text-[9px] font-black uppercase tracking-widest">{scheduledAt ? 'Scheduling Mode' : 'Instant Post'}</p>
             </div>
             <button 
               onClick={handleSubmit} 

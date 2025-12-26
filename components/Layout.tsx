@@ -1,5 +1,4 @@
-
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import * as RouterNamespace from 'react-router-dom';
 import { 
   Home, 
@@ -13,13 +12,19 @@ import {
   TrendingUp,
   Sparkles,
   AlertCircle,
-  Hash
+  Hash,
+  UserPlus,
+  Loader2
 } from 'lucide-react';
 import { auth, db } from '../firebase.ts';
 import * as firestoreModule from 'firebase/firestore';
+import { UserProfile } from '../types.ts';
 
-const { NavLink, Outlet, useNavigate, useSearchParams } = RouterNamespace as any;
-const { doc, onSnapshot, updateDoc, serverTimestamp, query, collection, where, limit } = firestoreModule as any;
+const { NavLink, Outlet, useNavigate, useSearchParams, Link } = RouterNamespace as any;
+const { 
+  doc, onSnapshot, updateDoc, serverTimestamp, query, collection, 
+  where, limit, orderBy, setDoc, deleteDoc, increment, addDoc 
+} = firestoreModule as any;
 type User = any;
 
 interface LayoutProps {
@@ -31,6 +36,7 @@ interface TrendingTag {
   count: number;
   category: string;
   uniqueAuthors: number;
+  lastUpdated: number;
 }
 
 const Layout: React.FC<LayoutProps> = ({ user }) => {
@@ -40,18 +46,21 @@ const Layout: React.FC<LayoutProps> = ({ user }) => {
   const [showLogoutModal, setShowLogoutModal] = useState(false);
   const [unreadNotifications, setUnreadNotifications] = useState(0);
   const [trendingTags, setTrendingTags] = useState<TrendingTag[]>([]);
+  
+  const [allUsers, setAllUsers] = useState<UserProfile[]>([]);
+  const [followingIds, setFollowingIds] = useState<Set<string>>(new Set());
+  const [blockedIds, setBlockedIds] = useState<Set<string>>(new Set());
+  const [followLoading, setFollowLoading] = useState<string | null>(null);
 
   const activeTag = searchParams.get('tag');
 
   useEffect(() => {
     if (!user?.uid) return;
     
-    // User Profile Data
     const unsubscribeProfile = onSnapshot(doc(db, 'users', user.uid), (snap: any) => {
       if (snap.exists()) setCurrentUserData(snap.data());
     });
 
-    // Unread Notifications Listener
     const qNotif = query(
       collection(db, 'notifications'),
       where('recipientId', '==', user.uid)
@@ -59,35 +68,61 @@ const Layout: React.FC<LayoutProps> = ({ user }) => {
     const unsubscribeNotifications = onSnapshot(qNotif, (snap: any) => {
       const unreadCount = snap.docs.filter((d: any) => d.data().read === false).length;
       setUnreadNotifications(unreadCount);
-    }, (err: any) => {
-      console.error("Notification listener failed:", err);
     });
 
-    // Trending Tags Discovery - Refined to include diversity check
+    const usersQuery = query(
+      collection(db, 'users'),
+      orderBy('followersCount', 'desc'),
+      limit(20)
+    );
+    const unsubscribeUsers = onSnapshot(usersQuery, (snap: any) => {
+      setAllUsers(snap.docs.map((d: any) => ({ ...d.data(), uid: d.id } as UserProfile)));
+    });
+
+    const followsQuery = query(
+      collection(db, 'follows'),
+      where('followerId', '==', user.uid)
+    );
+    const unsubscribeFollows = onSnapshot(followsQuery, (snap: any) => {
+      setFollowingIds(new Set(snap.docs.map((d: any) => d.data().followedId)));
+    });
+
+    const blocksQuery = query(
+      collection(db, 'blocks'),
+      where('blockerId', '==', user.uid)
+    );
+    const unsubscribeBlocks = onSnapshot(blocksQuery, (snap: any) => {
+      setBlockedIds(new Set(snap.docs.map((d: any) => d.data().blockedId)));
+    });
+
+    // INDEX-FREE TRENDING: Query by public visibility to ensure security rule compliance
     const tagsQuery = query(
       collection(db, 'posts'),
       where('visibility', '==', 'public'),
-      limit(150) // Larger sample for better trend diversity
+      limit(200) // Fetching a larger batch for better client-side aggregation
     );
-
     const unsubscribeTags = onSnapshot(tagsQuery, (snap: any) => {
       const tagMap: Record<string, { count: number; category: string; lastUpdated: number; authors: Set<string> }> = {};
-      
+      const now = Date.now();
+
       snap.docs.forEach((d: any) => {
         const data = d.data();
-        if (data.isPublished === true) {
+        const isPublished = data.isPublished === true || (data.scheduledAt && data.scheduledAt.toMillis() <= now);
+        
+        if (isPublished) {
           const tags = data.tags || [];
           const cat = data.category || 'General';
           const author = data.authorId;
           const time = data.createdAt?.toMillis() || 0;
           
           tags.forEach((tag: string) => {
-            if (!tagMap[tag]) {
-              tagMap[tag] = { count: 0, category: cat, lastUpdated: time, authors: new Set() };
+            const normalizedTag = tag.toLowerCase().trim();
+            if (!tagMap[normalizedTag]) {
+              tagMap[normalizedTag] = { count: 0, category: cat, lastUpdated: time, authors: new Set() };
             }
-            tagMap[tag].count += 1;
-            tagMap[tag].authors.add(author);
-            if (time > tagMap[tag].lastUpdated) tagMap[tag].lastUpdated = time;
+            tagMap[normalizedTag].count += 1;
+            tagMap[normalizedTag].authors.add(author);
+            if (time > tagMap[normalizedTag].lastUpdated) tagMap[normalizedTag].lastUpdated = time;
           });
         }
       });
@@ -100,10 +135,16 @@ const Layout: React.FC<LayoutProps> = ({ user }) => {
           lastUpdated: data.lastUpdated, 
           uniqueAuthors: data.authors.size 
         }))
-        // Prioritize tags used by different people (uniqueAuthors)
-        .sort((a, b) => (b.uniqueAuthors * 5 + b.count) - (a.uniqueAuthors * 5 + a.count) || b.lastUpdated - a.lastUpdated)
-        .slice(0, 4); // Limit to 4 as requested
-
+        // ENHANCEMENT: Only consider a tag "trending" if it appears in at least 2 DIFFERENT posts.
+        // This ensures trending topics reflect community-wide activity rather than a single tagged post.
+        .filter(tag => tag.count >= 2)
+        .sort((a, b) => {
+          // Weight unique authors heavily to prioritize organic community trends
+          const scoreA = (a.uniqueAuthors * 15) + a.count;
+          const scoreB = (b.uniqueAuthors * 15) + b.count;
+          return scoreB - scoreA || b.lastUpdated - a.lastUpdated;
+        })
+        .slice(0, 4);
       setTrendingTags(sortedTags);
     }, (err: any) => {
       console.error("Tags discovery failed:", err);
@@ -112,9 +153,50 @@ const Layout: React.FC<LayoutProps> = ({ user }) => {
     return () => {
       unsubscribeProfile();
       unsubscribeNotifications();
+      unsubscribeUsers();
+      unsubscribeFollows();
+      unsubscribeBlocks();
       unsubscribeTags();
     };
   }, [user]);
+
+  const suggestedPeople = useMemo(() => {
+    if (!user?.uid) return [];
+    return allUsers
+      .filter(u => u.uid !== user.uid && !followingIds.has(u.uid) && !blockedIds.has(u.uid))
+      .slice(0, 2);
+  }, [allUsers, followingIds, blockedIds, user?.uid]);
+
+  const handleFollow = async (targetUser: UserProfile) => {
+    if (!user?.uid || followLoading) return;
+    setFollowLoading(targetUser.uid);
+    const followId = `${user.uid}_${targetUser.uid}`;
+    
+    try {
+      await setDoc(doc(db, 'follows', followId), {
+        followerId: user.uid,
+        followedId: targetUser.uid,
+        createdAt: serverTimestamp()
+      });
+      
+      await updateDoc(doc(db, 'users', targetUser.uid), { followersCount: increment(1) });
+      await updateDoc(doc(db, 'users', user.uid), { followingCount: increment(1) });
+      
+      await addDoc(collection(db, 'notifications'), {
+        recipientId: targetUser.uid,
+        senderId: user.uid,
+        senderUsername: currentUserData?.username || 'user',
+        senderPhotoURL: currentUserData?.photoURL || '',
+        type: 'follow',
+        read: false,
+        createdAt: serverTimestamp()
+      });
+    } catch (err) {
+      console.error("Follow action failed:", err);
+    } finally {
+      setFollowLoading(null);
+    }
+  };
 
   const handleLogout = async () => {
     if (user?.uid) {
@@ -139,7 +221,6 @@ const Layout: React.FC<LayoutProps> = ({ user }) => {
   return (
     <div className="flex min-h-screen bg-brand-white transition-colors duration-500">
       <div className="flex w-full max-w-[1440px] mx-auto relative">
-        {/* Sidebar - Desktop */}
         <aside className="hidden md:flex flex-col w-72 border-r border-brand-gray-100 sticky top-0 h-screen p-8">
           <div className="mb-12 flex items-center space-x-3 px-2">
             <div className="w-10 h-10 bg-brand-black flex items-center justify-center rounded-2xl shadow-xl">
@@ -193,7 +274,7 @@ const Layout: React.FC<LayoutProps> = ({ user }) => {
 
           <div className="mt-auto space-y-3">
             {currentUserData && (
-              <div className="flex items-center space-x-4 px-6 py-4 mb-4 bg-brand-gray-50 rounded-[1.5rem] border border-brand-gray-100">
+              <Link to={`/u/${currentUserData.username}`} className="flex items-center space-x-4 px-6 py-4 mb-4 bg-brand-gray-50 rounded-[1.5rem] border border-brand-gray-100 hover:bg-brand-gray-100 transition-colors">
                 <div className="w-10 h-10 rounded-full overflow-hidden bg-brand-gray-200 border border-brand-white shadow-sm">
                   <img src={currentUserData.photoURL} className="w-full h-full object-cover" alt="" />
                 </div>
@@ -201,7 +282,7 @@ const Layout: React.FC<LayoutProps> = ({ user }) => {
                   <p className="text-[10px] font-black uppercase tracking-widest truncate text-brand-black">{currentUserData.displayName}</p>
                   <p className="text-[8px] font-bold text-brand-gray-400 truncate tracking-tight">@{currentUserData.username}</p>
                 </div>
-              </div>
+              </Link>
             )}
             <button
               onClick={() => setShowLogoutModal(true)}
@@ -213,7 +294,6 @@ const Layout: React.FC<LayoutProps> = ({ user }) => {
           </div>
         </aside>
 
-        {/* Main Content Area */}
         <main className="flex-1 min-w-0 bg-brand-white">
           <header className="md:hidden flex items-center justify-between p-6 border-b border-brand-gray-100 sticky top-0 bg-brand-white/80 backdrop-blur-3xl z-50">
              <div className="flex items-center space-x-3">
@@ -228,7 +308,6 @@ const Layout: React.FC<LayoutProps> = ({ user }) => {
             <Outlet context={{ trendingTags }} />
           </div>
 
-          {/* Bottom Nav Mobile */}
           <nav className="md:hidden fixed bottom-6 left-6 right-6 bg-brand-black/95 backdrop-blur-xl rounded-[2.5rem] shadow-[0_20px_50px_rgba(0,0,0,0.3)] flex justify-around items-center p-2 z-50 border border-white/10">
             {navItems.map((item) => (
               <NavLink
@@ -262,12 +341,11 @@ const Layout: React.FC<LayoutProps> = ({ user }) => {
           </nav>
         </main>
 
-        {/* Right Sidebar */}
-        <aside className="hidden xl:block w-96 p-10 border-l border-brand-gray-100 sticky top-0 h-screen overflow-y-auto">
+        <aside className="hidden xl:block w-96 p-10 border-l border-brand-gray-100 sticky top-0 h-screen overflow-y-auto scrollbar-hide">
           <section className="bg-brand-gray-50 border border-brand-gray-100 rounded-[2.5rem] p-8 mb-8 shadow-sm">
             <div className="flex items-center justify-between mb-8">
               <h3 className="font-black text-xs uppercase tracking-[0.2em] italic flex items-center text-brand-black">
-                <TrendingUp size={16} className="mr-2" /> Trending
+                <TrendingUp size={16} className="mr-2" /> Trending Topics
               </h3>
               <Sparkles size={14} className="text-brand-gray-400 animate-pulse" />
             </div>
@@ -277,46 +355,67 @@ const Layout: React.FC<LayoutProps> = ({ user }) => {
                   <button 
                     key={tag.name} 
                     onClick={() => navigate(`/?tag=${tag.name}`)}
-                    className={`w-full text-left group cursor-pointer transition-all ${activeTag === tag.name ? 'scale-105' : ''}`}
+                    className={`w-full text-left group cursor-pointer transition-all ${activeTag === tag.name ? 'scale-105' : 'hover:scale-[1.02]'}`}
                   >
                     <p className="text-[10px] text-brand-gray-500 font-black uppercase tracking-widest mb-1">{tag.category}</p>
-                    <p className={`font-bold text-lg group-hover:underline tracking-tight ${activeTag === tag.name ? 'text-brand-black underline' : 'text-brand-gray-700'}`}>
+                    <p className={`font-bold text-xl group-hover:underline tracking-tighter ${activeTag === tag.name ? 'text-brand-black underline' : 'text-brand-black/80'}`}>
                       #{tag.name}
                     </p>
-                    <p className="text-[10px] text-brand-gray-400 font-bold mt-1">
-                      {tag.count} posts • {tag.uniqueAuthors} authors
-                    </p>
+                    <div className="flex items-center space-x-3 mt-1.5">
+                      <p className="text-[9px] text-brand-gray-400 font-bold uppercase tracking-widest">
+                        {tag.count} posts
+                      </p>
+                      <span className="w-1 h-1 bg-brand-gray-200 rounded-full" />
+                      <p className="text-[9px] text-brand-gray-400 font-bold uppercase tracking-widest">
+                        {tag.uniqueAuthors} creators
+                      </p>
+                    </div>
                   </button>
                 ))
               ) : (
-                <div className="py-4 opacity-20">
-                  <p className="text-[10px] font-black uppercase tracking-widest">Nothing yet</p>
+                <div className="py-10 text-center opacity-20">
+                  <p className="text-[10px] font-black uppercase tracking-widest italic leading-relaxed">Gathering signals...</p>
                 </div>
               )}
             </div>
           </section>
 
           <section className="bg-brand-gray-50 border border-brand-gray-100 rounded-[2.5rem] p-8 shadow-sm">
-            <h3 className="font-black text-xs uppercase tracking-[0.2em] italic mb-8 text-brand-black">Suggested People</h3>
+            <h3 className="font-black text-xs uppercase tracking-[0.2em] italic mb-8 text-brand-black">Suggested Creators</h3>
             <div className="space-y-6">
-              {[1, 2].map((i) => (
-                <div key={i} className="flex items-center justify-between">
-                  <div className="flex items-center space-x-4">
-                    <div className="w-12 h-12 bg-brand-gray-200 rounded-full border-2 border-brand-white shadow-lg"></div>
-                    <div>
-                      <p className="font-black text-xs uppercase tracking-widest text-brand-black">Alpha_Zero</p>
-                      <p className="text-[10px] text-brand-gray-400 font-bold">@alpha_0</p>
-                    </div>
+              {suggestedPeople.length > 0 ? (
+                suggestedPeople.map((u) => (
+                  <div key={u.uid} className="flex items-center justify-between group">
+                    <Link to={`/u/${u.username}`} className="flex items-center space-x-4 min-w-0 flex-1">
+                      <div className="w-12 h-12 bg-brand-gray-200 rounded-full border-2 border-brand-white shadow-lg overflow-hidden flex-shrink-0 group-hover:scale-105 transition-transform">
+                        <img src={u.photoURL} alt="" className="w-full h-full object-cover" />
+                      </div>
+                      <div className="min-w-0">
+                        <p className="font-black text-xs uppercase tracking-widest text-brand-black truncate">
+                          {u.displayName.split(' ')[0]}
+                        </p>
+                        <p className="text-[10px] text-brand-gray-400 font-bold truncate">@{u.username}</p>
+                      </div>
+                    </Link>
+                    <button 
+                      onClick={() => handleFollow(u)}
+                      disabled={followLoading === u.uid}
+                      className="bg-brand-black text-white text-[9px] font-black uppercase tracking-widest py-2.5 px-6 rounded-full shadow-lg active:scale-95 transition-all hover:opacity-80 disabled:opacity-50"
+                    >
+                      {followLoading === u.uid ? <Loader2 size={12} className="animate-spin" /> : 'Follow'}
+                    </button>
                   </div>
-                  <button className="bg-brand-black text-white text-[9px] font-black uppercase tracking-widest py-2.5 px-6 rounded-full shadow-lg active:scale-95 transition-all">Follow</button>
+                ))
+              ) : (
+                <div className="py-10 text-center opacity-20">
+                  <p className="text-[10px] font-black uppercase tracking-widest">No suggestions</p>
                 </div>
-              ))}
+              )}
             </div>
           </section>
         </aside>
       </div>
 
-      {/* Logout Confirmation Modal */}
       {showLogoutModal && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-300">
           <div className="bg-brand-white w-full max-w-sm rounded-[2.5rem] border border-brand-gray-200 p-8 shadow-2xl animate-in zoom-in-95 duration-200">
